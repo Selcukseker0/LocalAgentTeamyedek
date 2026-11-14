@@ -24,9 +24,71 @@ Ollama uygulamasının/servisinin çalıştığından emin olun.
 npm start
 ```
 
-## Shorts video görünümü
+## Shorts video görünümü (beyaz tahta / keçeli kalem stili)
 
-Video montajında stok kliplere yavaş yakınlaşma/uzaklaşma hareketi ve sahneler arasında kısa geçişler uygulanır. Altyazılar büyük, kenarlıklı ve kısa bir açılma animasyonuyla gösterilir. Bu efektler için FFmpeg kurulumunda `zoompan`, `xfade` ve `ass` filtreleri (libass) bulunmalıdır.
+Videolar stok klip yerine **beyaz kâğıt üzerine keçeli kalemle çizim** olarak
+üretilir: dikey 1080x1920, beyaz zemin, siyah marker çizgileri, seçici renk
+dolguları (bal sarısı, süt mavisi, ekmek kahvesi) ve sağ alttan giren gerçek
+bir el. Altyazılar ekranın altında koyu yarı saydam kutuda beyaz kalın yazıyla
+gösterilir.
+
+Akış:
+
+1. `WhiteboardVideoAgent` senaryoyu cümlelere böler ve süreleri ses dosyası /
+   SRT zamanlamasından çıkarır.
+2. Her cümle için bir sahne seçilir: Ollama varsa model seçer, yoksa Türkçe
+   anahtar kelime eşlemesi devreye girer (`src/agents/WhiteboardVideoAgent.js`).
+3. `src/whiteboard/render.py` (Pillow) her sahneyi kare kare çizer: çizgi
+   darbeleri sahne süresinin ilk %80'inde tamamlanır, el kalemi takip eder ve
+   sahne sonunda kareyi terk eder. Altyazılar da karelere gömülür.
+4. `ffmpeg` kareleri ses ile birleştirip `shorts_whiteboard.mp4` üretir.
+
+### Gereksinimler
+
+```bash
+pip install Pillow imageio-ffmpeg    # render + ffmpeg (sistemde ffmpeg yoksa)
+pip install edge-tts                 # seslendirme (VoiceAgent)
+```
+
+`ffmpeg` sistemde kuruluysa doğrudan kullanılır; değilse `imageio-ffmpeg`
+paketindeki statik sürüm bulunur. Özel bir kurulum için `FFMPEG_PATH`
+değişkenini kullanın.
+
+### Tek başına deneme
+
+```bash
+npm run whiteboard-demo
+# veya kendi metninizle
+node src/scripts/whiteboardDemo.js --text "Bal neden bozulmaz? ..." \
+  --audio output/voice.mp3 --srt output/subs.srt
+```
+
+Ses dosyası verilmezse video sessiz üretilir; altyazılar yine gömülür.
+Çıktı: `output/whiteboard-demo/shorts_whiteboard.mp4`.
+
+### Sahne kütüphanesi
+
+Sahneler `src/whiteboard/scenes.py` içinde vektör çizim darbeleri olarak
+tanımlıdır: `egyptian_vase`, `honey_pot`, `milk_bread_honey`, `water_drop`,
+`bacteria_honey`, `question`, `clock`, `sun`, `heart`, `money`, `house`,
+`book`, `check`, `cross`, `generic`.
+
+Yeni sahne eklemek için aynı dosyada `scene_<isim>()` fonksiyonu yazıp
+`SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar kelimeleri
+ekleyin. İsteğe bağlı olarak `src/agents/WhiteboardVideoAgent.js` içindeki
+`SCENE_HINTS` sözlüğüne Türkçe açıklama ekleyin (Ollama'nın seçmesi için).
+
+### El görseli
+
+`src/whiteboard/assets/hand_marker.png` yeşil perdeden alfa kanalına
+çevrilmiş bir el sprite'ıdır. Farklı bir el kullanmak için
+`hand_marker_raw.png` dosyasını düz yeşil zeminli bir görselle değiştirip:
+
+```bash
+python src/whiteboard/prepare_hand.py
+```
+
+komutunu çalıştırın. `hand_marker.png` yoksa render vektörel yedek eli kullanır.
 
 ## Kontroller
 

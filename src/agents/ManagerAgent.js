@@ -8,7 +8,7 @@ import { ReviewerAgent } from './ReviewerAgent.js';
 import { TrendAgent } from './TrendAgent.js';
 import { ScriptAgent } from './ScriptAgent.js';
 import { VoiceAgent } from './VoiceAgent.js';
-import { VideoAgent } from './VideoAgent.js';
+import { WhiteboardVideoAgent } from './WhiteboardVideoAgent.js';
 import { QualityAgent } from './QualityAgent.js';
 import { TelegramAgent } from './TelegramAgent.js';
 import { YouTubeAgent } from './YouTubeAgent.js';
@@ -20,7 +20,7 @@ export class ManagerAgent {
     this.trend = new TrendAgent();
     this.script = new ScriptAgent();
     this.voice = new VoiceAgent();
-    this.video = new VideoAgent();
+    this.video = new WhiteboardVideoAgent();
     this.quality = new QualityAgent();
     this.telegram = new TelegramAgent();
     this.youtube = new YouTubeAgent();
@@ -59,10 +59,12 @@ export class ManagerAgent {
         }
 
         const { audioPath, srtPath } = await this.voice.synthesize(scriptObj.narration, workDir);
+        // Beyaz tahta (keçeli kalem) stili: Pixabay stok klip yerine
+        // Pillow ile çizilen kareler kullanılır.
         const { videoPath, duration } = await this.video.renderShorts({
           audioPath,
           srtPath,
-          visualQueries: scriptObj.visualQueries,
+          narration: scriptObj.narration,
           workDir
         });
 
