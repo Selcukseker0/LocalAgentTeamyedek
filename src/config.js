@@ -1,7 +1,14 @@
-import dotenv from 'dotenv';
 import path from 'node:path';
 
-dotenv.config();
+// dotenv yalnızca .env kolaylığı sağlar. Bağımlılıklar kurulu değilse
+// (ör. sadece beyaz tahta demosunu denemek isteyen kullanıcı) süreç
+// çökmemeli; ortam değişkenleri doğrudan kullanılır.
+try {
+  const dotenv = await import('dotenv');
+  (dotenv.default ?? dotenv).config();
+} catch {
+  console.warn('[config] dotenv bulunamadı, .env yüklenmedi. `npm install` çalıştırın.');
+}
 
 export const config = {
   ollamaUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',

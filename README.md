@@ -66,6 +66,39 @@ node src/scripts/whiteboardDemo.js --text "Bal neden bozulmaz? ..." \
 Ses dosyası verilmezse video sessiz üretilir; altyazılar yine gömülür.
 Çıktı: `output/whiteboard-demo/shorts_whiteboard.mp4`.
 
+### Windows (PowerShell) notları
+
+`npm : File ...\npm.ps1 cannot be loaded because running scripts is disabled on this system`
+hatası PowerShell betik politikasından gelir. Şu seçeneklerden biri:
+
+```powershell
+npm.cmd run whiteboard-demo                        # en hızlı çözüm
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned # kalıcı çözüm (yönetici gerekmez)
+```
+
+`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'` hatası bağımlılıkların
+kurulmadığı anlamına gelir:
+
+```powershell
+npm install
+```
+
+`.env` desteği isteğe bağlıdır: `node_modules` yoksa proje çökmez, yalnızca
+`[config] dotenv bulunamadı` uyarısı verir ve doğrudan beyaz tahta demosu
+çalışır.
+
+Python birden fazla sürümde kuruluysa (`py`, Microsoft Store sürümü, venv)
+`WhiteboardVideoAgent` içinde **Pillow'un kurulu olduğu yorumlayıcı** otomatik
+seçilir. Yine de bulunamazsa:
+
+```powershell
+py -3 -m pip install Pillow imageio-ffmpeg
+$env:PYTHON_BIN = "py"
+```
+
+Font otomatik aranır; Windows'ta `C:\Windows\Fonts\arialbd.ttf` kullanılır.
+Farklı bir yazı tipi için `WHITEBOARD_FONT` değişkenine `.ttf` yolunu yazın.
+
 ### Sahne kütüphanesi
 
 Sahneler `src/whiteboard/scenes.py` içinde vektör çizim darbeleri olarak
