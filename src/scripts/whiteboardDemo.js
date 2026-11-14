@@ -13,6 +13,41 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { WhiteboardVideoAgent } from '../agents/WhiteboardVideoAgent.js';
+import { resolveBinaries } from '../utils/ffmpeg.js';
+
+/** Gerekli araçları (Python + Pillow + ffmpeg) erkenden kontrol eder. */
+async function preflight(agent) {
+  let python;
+  try {
+    python = await agent.resolvePython();
+  } catch {
+    throw new Error(
+      'Python 3 bulunamadı. https://www.python.org/downloads/ adresinden kurun ' +
+      've kurulumda "Add python.exe to PATH" seçeneğini işaretleyin.'
+    );
+  }
+
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(execFile)(python, ['-c', 'import PIL']);
+  } catch {
+    throw new Error(
+      `Pillow kurulu değil. Şunu çalıştırın: ${python} -m pip install Pillow`
+    );
+  }
+
+  try {
+    const { ffmpeg } = await resolveBinaries();
+    console.log(`ffmpeg: ${ffmpeg}`);
+  } catch {
+    throw new Error(
+      'ffmpeg bulunamadı. Şunu çalıştırın: ' +
+      `${python} -m pip install imageio-ffmpeg ` +
+      '(veya FFMPEG_PATH ortam değişkenine ffmpeg.exe yolunu yazın).'
+    );
+  }
+}
 
 const DEFAULT_NARRATION =
   "Mısır'daki mezarlarda 3000 yıllık bal bulundu ve hâlâ yenebilir durumdaydı. " +
@@ -79,6 +114,14 @@ async function main() {
   }
 
   const agent = new WhiteboardVideoAgent();
+  await preflight(agent);
+
+  if (audioArg) {
+    const audioPath = path.resolve(audioArg);
+    const exists = await fs.stat(audioPath).then(() => true).catch(() => false);
+    if (!exists) throw new Error(`Ses dosyası bulunamadı: ${audioPath}`);
+  }
+
   const { videoPath, duration } = await agent.renderShorts({
     audioPath: audioArg ? path.resolve(audioArg) : null,
     srtPath,

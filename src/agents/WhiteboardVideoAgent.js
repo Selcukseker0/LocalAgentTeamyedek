@@ -110,17 +110,42 @@ export class WhiteboardVideoAgent {
     this._python = null;
   }
 
+  /**
+   * Pillow'un kurulu olduğu Python yorumlayıcısını seçer.
+   * Birden fazla Python varsa (Windows mağaza sürümü, venv, python3, ...)
+   * önce `import PIL` başarılı olan aday kullanılır.
+   */
   async resolvePython() {
     if (this._python) return this._python;
-    const candidates = [config.pythonBin, 'python3', 'python'].filter(Boolean);
+    const candidates = [...new Set(
+      [config.pythonBin, 'python3', 'python', 'py'].filter(Boolean)
+    )];
+
+    const existing = [];
     for (const bin of candidates) {
       try {
         await execFileAsync(bin, ['--version']);
-        this._python = bin;
-        return bin;
+        existing.push(bin);
       } catch {
         // sıradaki aday
       }
+    }
+
+    for (const bin of existing) {
+      try {
+        await execFileAsync(bin, ['-c', 'import PIL']);
+        this._python = bin;
+        return bin;
+      } catch {
+        // bu yorumlayıcıda Pillow yok
+      }
+    }
+
+    if (existing.length > 0) {
+      // Pillow hiçbirinde yok: yine de ilkini döndür, hata mesajı preflight'ta verilir
+      log2(`Pillow hiçbir Python yorumlayıcısında bulunamadı (${existing.join(', ')}).`, 'WARN');
+      this._python = existing[0];
+      return existing[0];
     }
     throw new Error('Python 3 bulunamadı (Pillow gerekli).');
   }
