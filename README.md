@@ -7,13 +7,13 @@ Ollama üzerinde yerel çalışan, TypeScript ile yazılmış deneysel çoklu aj
 - Node.js 20 veya üzeri
 - npm
 - Ollama
-- Ollama üzerinde `qwen2.5:3b` veya yapılandırdığınız başka bir sohbet modeli
+- Ollama üzerinde `qwen2.5:7b` veya yapılandırdığınız başka bir sohbet modeli
 
 ## Kurulum
 
 ```bash
 npm install
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
 ```
 
 Ollama uygulamasının/servisinin çalıştığından emin olun.
@@ -23,6 +23,10 @@ Ollama uygulamasının/servisinin çalıştığından emin olun.
 ```bash
 npm start
 ```
+
+## Shorts video görünümü
+
+Video montajında stok kliplere yavaş yakınlaşma/uzaklaşma hareketi ve sahneler arasında kısa geçişler uygulanır. Altyazılar büyük, kenarlıklı ve kısa bir açılma animasyonuyla gösterilir. Bu efektler için FFmpeg kurulumunda `zoompan`, `xfade` ve `ass` filtreleri (libass) bulunmalıdır.
 
 ## Kontroller
 
@@ -37,11 +41,10 @@ npm test
 
 İsteğe bağlı olarak `.env.example` dosyasındaki değişkenleri ortam değişkeni olarak tanımlayın:
 
-- `OLLAMA_URL`: Ollama Chat API adresi
+- `OLLAMA_BASE_URL`: Ollama Chat API adresi
 - `OLLAMA_MODEL`: Kullanılacak model
-- `OLLAMA_TIMEOUT_MS`: İstek zaman aşımı (ms)
 
-Proje şu an `.env` dosyasını otomatik yüklemez; değişkenleri terminal/işletim sistemi ortamından vermeniz gerekir.
+Proje `.env` dosyasını otomatik yükler. Senaryo, senaryo inceleme, trend seçimi ve hata analizi yerel Ollama modeliyle çalışır; bu akışlarda Gemini API anahtarı kullanılmaz.
 
 ## Mevcut doğrulama sınırı
 

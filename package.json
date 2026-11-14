@@ -1,19 +1,17 @@
 {
-  "name": "localagentteam",
-  "version": "1.1.0",
-  "private": true,
-  "description": "Ollama üzerinde çalışan yerel çoklu ajan yazılım ekibi",
+  "name": "local-agent-team-shorts",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck"
+    "start": "node src/index.js",
+    "run-now": "node src/index.js --run-now",
+    "youtube-auth": "node src/scripts/youtubeAuth.js"
   },
-  "keywords": ["ollama", "agents", "typescript", "local-ai"],
-  "license": "MIT",
-  "devDependencies": {
-    "@types/node": "^26.6.6",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "fast-xml-parser": "^4.4.1",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0"
   }
 }

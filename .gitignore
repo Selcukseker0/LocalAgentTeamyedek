@@ -1,9 +1,5 @@
 node_modules/
-dist/
 .env
-.env.*
-!.env.example
-*.log
-__agent_validation__*
-
-.agent-validation-*/
+output/
+data/youtube_token.json
+data/system.log
