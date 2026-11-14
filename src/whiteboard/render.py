@@ -387,7 +387,30 @@ class SceneRenderer:
         return frame
 
 
-def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None):
+def make_sheet(frame_paths, out_path, thumb_w=432):
+    """Karelerden 4'lük bir önizleme (contact sheet) üretir."""
+    if not frame_paths:
+        return None
+    # İlk/son kareler boş kâğıt ya da bitmiş çizim olabilir; aralardan seç
+    fractions = (0.15, 0.4, 0.65, 0.9)
+    picks = [frame_paths[min(len(frame_paths) - 1, int(f * len(frame_paths)))]
+             for f in fractions]
+    thumbs = []
+    for fp in picks:
+        img = Image.open(fp)
+        ratio = thumb_w / img.width
+        thumbs.append(img.resize((thumb_w, int(img.height * ratio)), Image.LANCZOS))
+    height = max(t.height for t in thumbs)
+    sheet = Image.new("RGB", (thumb_w * len(thumbs), height), (255, 255, 255))
+    for i, t in enumerate(thumbs):
+        sheet.paste(t, (i * thumb_w, 0))
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    sheet.save(out_path, quality=88)
+    return out_path
+
+
+def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None,
+           sheet_path=None):
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
@@ -406,6 +429,7 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
     hand_variants = make_variants(load_hand(width * 0.56)) if with_hand else []
     frame_idx = 0
     elapsed = 0.0
+    written = []
 
     for scene_no, scene in enumerate(scenes):
         scene_id = scene.get("id") or pick_scene_for_text(scene.get("text", ""))
@@ -418,11 +442,17 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
             frame = renderer.frame(t)
             if subs:
                 subs.draw(frame, elapsed + t)
-            frame.convert("RGB").save(os.path.join(out_dir, f"frame_{frame_idx:05d}.png"))
+            out_file = os.path.join(out_dir, f"frame_{frame_idx:05d}.png")
+            frame.convert("RGB").save(out_file)
+            written.append(out_file)
             frame_idx += 1
 
         elapsed += renderer.n_frames / fps
 
+    if sheet_path:
+        sheet = make_sheet(written, sheet_path)
+        if sheet:
+            print(f"Önizleme: {sheet}")
     print(f"OK {frame_idx} kare üretildi -> {out_dir}")
 
 
@@ -434,6 +464,7 @@ def main():
     ap.add_argument("--size", default="1080x1920")
     ap.add_argument("--srt", default=None, help="Altyazı dosyası (karelere gömülür)")
     ap.add_argument("--no-hand", action="store_true", help="El sprite'ını kapat")
+    ap.add_argument("--sheet", default=None, help="Önizleme görseli (4 kare) yolu")
     ap.add_argument("--list-scenes", action="store_true",
                     help="Kullanılabilir sahne kimliklerini JSON olarak yaz")
     args = ap.parse_args()
@@ -446,7 +477,7 @@ def main():
 
     w, h = args.size.lower().split("x")
     render(args.manifest, args.out, args.fps, int(w), int(h),
-           with_hand=not args.no_hand, srt_path=args.srt)
+           with_hand=not args.no_hand, srt_path=args.srt, sheet_path=args.sheet)
 
 
 if __name__ == "__main__":

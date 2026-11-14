@@ -69,7 +69,18 @@ node src/scripts/whiteboardDemo.js --text "Bal neden bozulmaz? ..." \
 Ses dosyası verilmezse video sessiz üretilir; altyazılar yine gömülür.
 1080x1920, 30 fps bir videonun kare üretimi ortalama bir dizüstünde
 ~1-1.5 dakika sürer.
-Çıktı: `output/whiteboard-demo/shorts_whiteboard.mp4`.
+
+Her çalıştırma kendi zaman damgalı dosyasını üretir, ör.
+`output/whiteboard-demo/shorts_whiteboard_20261114-213524.mp4`. Aynı klasörde:
+
+- `preview.jpg` — 4 karelik önizleme (videonun gerçekten yeni olduğunu
+  anlamanın en hızlı yolu)
+- `run_info.json` — git commit, sahne sırası, kare sayısı, süre, ses dosyası
+- `frames/` — kareler (her çalıştırmada sıfırlanır)
+
+Konsol çıktısı ayrıca dosya boyutu ve SHA1 özetini yazar; iki çalıştırmanın
+çıktısı aynı görünüyorsa SHA1 ve `run_info.json` içindeki commit ile
+karşılaştırabilirsin.
 
 ### Windows (PowerShell) notları
 

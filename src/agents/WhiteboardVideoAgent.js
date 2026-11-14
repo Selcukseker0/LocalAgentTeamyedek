@@ -274,14 +274,38 @@ Yalnızca şu JSON biçimini döndür:
 
   // -------------------------------------------------------------- görüntü
 
-  async renderFrames(manifestPath, framesDir, srtPath = null) {
+  async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null) {
     const python = await this.resolvePython();
     log2('Kareler çiziliyor (Pillow)...');
     const args = [RENDER_SCRIPT, '--manifest', manifestPath, '--out', framesDir,
       '--fps', String(FPS), '--size', `${WIDTH}x${HEIGHT}`];
     if (srtPath) args.push('--srt', srtPath);
+    if (sheetPath) args.push('--sheet', sheetPath);
     const { stdout } = await execFileAsync(python, args, { maxBuffer: 8 * 1024 * 1024 });
     if (stdout.trim()) log2(stdout.trim());
+  }
+
+  /** Kısa çalıştırma özeti: hangi sürümün hangi sahneyle üretildiği belli olsun. */
+  async writeRunInfo(workDir, data) {
+    const infoPath = path.join(workDir, 'run_info.json');
+    let commit = 'bilinmiyor';
+    try {
+      const { stdout } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+        cwd: path.resolve(HERE, '../..')
+      });
+      commit = stdout.trim();
+    } catch {
+      // git yoksa sorun değil
+    }
+    const payload = {
+      ...data,
+      commit,
+      fps: FPS,
+      size: `${WIDTH}x${HEIGHT}`,
+      generatedAt: new Date().toISOString()
+    };
+    await fs.writeFile(infoPath, JSON.stringify(payload, null, 2), 'utf8');
+    return infoPath;
   }
 
   async encodeVideo({ framesDir, audioPath, outPath, frameCount }) {
@@ -316,8 +340,14 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string} opts.workDir         çalışma klasörü
    * @param {string[]|null} [opts.scenes] hazır sahne kimlikleri (planlamayı atlar)
    */
-  async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null }) {
+  /**
+   * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
+   */
+  async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
+    fileName = 'shorts_whiteboard.mp4' }) {
+    // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
+    await fs.rm(framesDir, { recursive: true, force: true });
     await fs.mkdir(framesDir, { recursive: true });
 
     const hasAudio = Boolean(audioPath) &&
@@ -361,11 +391,12 @@ Yalnızca şu JSON biçimini döndür:
     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
     log2(`Sahne planı: ${manifest.scenes.map((s) => s.id).join(' → ')}`);
 
-    await this.renderFrames(manifestPath, framesDir, srtPath);
+    const sheetPath = path.join(workDir, 'preview.jpg');
+    await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath);
     const frames = (await fs.readdir(framesDir)).filter((f) => f.endsWith('.png'));
     if (frames.length === 0) throw new Error('Hiç kare üretilmedi.');
 
-    const finalPath = path.join(workDir, 'shorts_whiteboard.mp4');
+    const finalPath = path.join(workDir, fileName);
     await this.encodeVideo({
       framesDir,
       audioPath: hasAudio ? audioPath : null,
@@ -374,8 +405,23 @@ Yalnızca şu JSON biçimini döndür:
     });
 
     const finalDuration = frames.length / FPS;
+    const runInfo = await this.writeRunInfo(workDir, {
+      video: path.basename(finalPath),
+      scenes: manifest.scenes.map((sc) => sc.id),
+      sentences: manifest.scenes.map((sc) => sc.text),
+      frameCount: frames.length,
+      duration: Number(finalDuration.toFixed(2)),
+      audio: hasAudio ? path.basename(audioPath) : null
+    });
     log2(`Shorts hazır: ${finalPath} (${finalDuration.toFixed(1)}s, ${frames.length} kare)`);
-    return { videoPath: finalPath, duration: finalDuration };
+    log2(`Çalıştırma bilgisi: ${runInfo}`);
+    return {
+      videoPath: finalPath,
+      duration: finalDuration,
+      frameCount: frames.length,
+      previewPath: sheetPath,
+      scenes: manifest.scenes.map((sc) => sc.id)
+    };
   }
 }
 
