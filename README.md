@@ -38,9 +38,12 @@ Akış:
    SRT zamanlamasından çıkarır.
 2. Her cümle için bir sahne seçilir: Ollama varsa model seçer, yoksa Türkçe
    anahtar kelime eşlemesi devreye girer (`src/agents/WhiteboardVideoAgent.js`).
-3. `src/whiteboard/render.py` (Pillow) her sahneyi kare kare çizer: çizgi
-   darbeleri sahne süresinin ilk %80'inde tamamlanır, el kalemi takip eder ve
-   sahne sonunda kareyi terk eder. Altyazılar da karelere gömülür.
+3. `src/whiteboard/render.py` (Pillow) her sahneyi kare kare çizer. Çizim
+   gerçek marker hissi verecek şekilde yapılır (`src/whiteboard/ink.py`):
+   değişken uç kalınlığı ve basınç profili, uç birikmesi, darbeler arasında
+   kalemin havada gezinmesi, kâğıt grain/lif dokusu ve vinyet, yarı saydam
+   bantlı renk dolguları. El sahne başında kadraja girer, kalemi takip eder
+   ve sahne sonunda kareyi terk eder. Altyazılar da karelere gömülür.
 4. `ffmpeg` kareleri ses ile birleştirip `shorts_whiteboard.mp4` üretir.
 
 ### Gereksinimler
@@ -64,6 +67,8 @@ node src/scripts/whiteboardDemo.js --text "Bal neden bozulmaz? ..." \
 ```
 
 Ses dosyası verilmezse video sessiz üretilir; altyazılar yine gömülür.
+1080x1920, 30 fps bir videonun kare üretimi ortalama bir dizüstünde
+~1-1.5 dakika sürer.
 Çıktı: `output/whiteboard-demo/shorts_whiteboard.mp4`.
 
 ### Windows (PowerShell) notları
@@ -102,9 +107,15 @@ Farklı bir yazı tipi için `WHITEBOARD_FONT` değişkenine `.ttf` yolunu yazı
 ### Sahne kütüphanesi
 
 Sahneler `src/whiteboard/scenes.py` içinde vektör çizim darbeleri olarak
-tanımlıdır: `egyptian_vase`, `honey_pot`, `milk_bread_honey`, `water_drop`,
-`bacteria_honey`, `question`, `clock`, `sun`, `heart`, `money`, `house`,
-`book`, `check`, `cross`, `generic`.
+tanımlıdır:
+
+- Genel: `egyptian_vase`, `honey_pot`, `milk_bread_honey`, `water_drop`,
+  `bacteria_honey`, `bee`, `question`, `clock`, `sun`, `heart`, `house`,
+  `book`, `check`, `cross`, `generic`
+- Trend/ekonomi: `chart`, `money`, `shopping`, `factory`
+- Teknoloji/sağlık/çevre: `phone`, `shield`, `flame`, `cloud_rain`
+
+`python src/whiteboard/render.py --list-scenes` komutu güncel listeyi verir.
 
 Yeni sahne eklemek için aynı dosyada `scene_<isim>()` fonksiyonu yazıp
 `SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar kelimeleri
@@ -122,6 +133,10 @@ python src/whiteboard/prepare_hand.py
 ```
 
 komutunu çalıştırın. `hand_marker.png` yoksa render vektörel yedek eli kullanır.
+
+Render sırasında elden üç açı/ölçek varyantı üretilir ve kol kadraj dışına
+taşacak şekilde uzatılır; her sahne farklı varyantı kullanır. Böylece aynı el
+tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 
 ## Kontroller
 
