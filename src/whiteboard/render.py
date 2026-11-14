@@ -7,10 +7,11 @@ manifest.json biçimi:
     {"fps": 30, "width": 1080, "height": 1920,
      "scenes": [{"id": "egyptian_vase", "duration": 4.0, "text": "..."}, ...]}
 
-Her sahne sıfırdan çizilir: kalem darbeleri sahne süresinin ilk %80'inde
-ilerler, kalan %20'de bitmiş çizim ekranda kalır. Çizim sırasında gerçek
-keçeli kalem tutan bir el (PNG sprite) kalem ucunu takip eder; referans
-videodaki gibi sahne sonunda el kareyi terk eder.
+Her sahne sıfırdan çizilir. Kalem darbeleri gerçek bir marker gibi:
+değişken kalınlıkta, uç birikmeli, darbeler arasında kalem kalkıp yeni
+konuma gider. Renk dolguları yarı saydam bantlarla, soldan sağa sürülerek
+doldurulur. Çizim sahne süresinin ilk %82'sinde biter; sonra el kareyi
+terk eder ve çizim kısa bir süre ekranda kalır.
 """
 
 import argparse
@@ -24,31 +25,27 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
 
+from ink import (  # noqa: E402
+    draw_fill_reveal,
+    draw_partial,
+    draw_stroke,
+    make_fill,
+    make_paper,
+    path_length,
+    truncate,
+)
 from scenes import SCENES, get_scene, pick_scene_for_text  # noqa: E402
 from subtitles import SubtitleRenderer, parse_srt  # noqa: E402
 
-DRAW_FRACTION = 0.8  # çizim, sahne süresinin bu kadarında biter
+DRAW_FRACTION = 0.88     # çizim, sahne süresinin bu kadarında tamamlanır
+DRAW_SPEED = 1500.0      # çizim hızı (1080px tuvalde piksel/saniye)
+TRAVEL_TIME = 0.15       # iki darbe arasında kalemin havada gidiş süresi
+FILL_TIME = 0.75         # bir renk dolgusunun sürülme süresi
+EXIT_TIME = 0.55         # sahne sonunda elin kareyi terk etme süresi
 
 SKIN = (223, 176, 140)
 SKIN_DARK = (188, 141, 108)
 SKIN_LIGHT = (240, 199, 168)
-
-
-def paper_background(w, h):
-    """Referans videodaki gibi beyaz kâğıt + altta hafif gölge."""
-    img = Image.new("RGB", (w, h), (252, 252, 250))
-    draw = ImageDraw.Draw(img)
-
-    for i in range(260):
-        y = h - 260 + i
-        shade = 252 - int(28 * (i / 260) ** 2)
-        draw.line([(0, y), (w, y)], fill=(shade, shade, shade - 2))
-
-    rnd = random.Random(42)
-    for _ in range(2600):
-        x, y = rnd.randrange(w), rnd.randrange(h)
-        draw.point((x, y), fill=(246, 246, 244))
-    return img
 
 
 def _rounded(draw, box, radius, fill=None, outline=None, width=1):
@@ -56,11 +53,7 @@ def _rounded(draw, box, radius, fill=None, outline=None, width=1):
 
 
 def make_hand_sprite(scale=1.0):
-    """Keçeli kalem tutan el sprite'ı üretir.
-
-    Yerel koordinatlar: kalem ucu (0, 0) noktasında, gövde sağ-aşağı uzanır.
-    Sprite geri döndürülmüş hâlde döner; çağıran taraf ucu hedef noktaya koyar.
-    """
+    """Yedek (vektörel) el sprite'ı — gerçek görsel yoksa kullanılır."""
     sx = scale
     W, H = int(1000 * sx), int(900 * sx)
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -72,37 +65,20 @@ def make_hand_sprite(scale=1.0):
     def box(x1, y1, x2, y2):
         return [x1 * sx, y1 * sx, x2 * sx, y2 * sx]
 
-    # --- Kalem ucu (siyah konik)
     d.polygon([P(6, 6), P(120, 52), P(104, 132)], fill=(24, 24, 24, 255))
     d.polygon([P(6, 6), P(118, 96), P(104, 132)], fill=(52, 52, 52, 255))
-
-    # --- Kalem gövdesi (beyaz marker + siyah kapak)
     _rounded(d, box(112, 46, 430, 170), int(26 * sx), fill=(252, 252, 252, 255),
              outline=(30, 30, 30, 255), width=int(5 * sx))
     _rounded(d, box(380, 52, 470, 164), int(16 * sx), fill=(28, 28, 28, 255))
-    d.line([P(150, 70), P(400, 70)], fill=(226, 226, 226, 255), width=int(6 * sx))
-
-    # --- Başparmak
     _rounded(d, box(150, 118, 300, 236), int(48 * sx), fill=SKIN_LIGHT,
              outline=SKIN_DARK, width=int(4 * sx))
-    d.line([P(300, 140), P(300, 220)], fill=SKIN_DARK, width=int(4 * sx))
-
-    # --- Avuç
     d.ellipse(box(230, 140, 620, 470), fill=SKIN, outline=SKIN_DARK, width=int(4 * sx))
-
-    # --- Parmaklar (kalemi kavrayan)
-    for i, (x, y, rr) in enumerate([(300, 150, 70), (390, 165, 66), (470, 185, 60),
-                                    (545, 215, 54)]):
+    for x, y, rr in [(300, 150, 70), (390, 165, 66), (470, 185, 60), (545, 215, 54)]:
         d.ellipse(box(x - rr, y - rr * 0.72, x + rr, y + rr * 0.72), fill=SKIN_LIGHT,
                   outline=SKIN_DARK, width=int(4 * sx))
-        d.line([P(x - rr * 0.6, y + rr * 0.45), P(x + rr * 0.6, y + rr * 0.55)],
-               fill=SKIN_DARK, width=int(3 * sx))
-
-    # --- Bilek (kadrajın dışına uzar)
     d.polygon([P(430, 330), P(760, 300), P(980, 860), P(520, 900)], fill=SKIN,
               outline=SKIN_DARK)
 
-    # Yumuşak gölge
     shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
     sd.ellipse(box(180, 150, 700, 520), fill=(0, 0, 0, 55))
@@ -113,54 +89,107 @@ def make_hand_sprite(scale=1.0):
     return out
 
 
-def stroke_lengths(strokes):
-    lengths = []
-    for pts, _color, _width in strokes:
-        total = 0.0
-        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
-            total += math.hypot(x2 - x1, y2 - y1)
-        lengths.append(total)
-    return lengths
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+HAND_PNG = os.path.join(ASSETS, "hand_marker.png")
+HAND_META = os.path.join(ASSETS, "hand_marker.json")
 
 
-def draw_progress(draw, strokes, lengths, progress, scale_x, scale_y):
-    """progress (0..1) kadar çizimi yapar; kalem ucunun konumunu döndürür."""
-    if progress <= 0:
-        return None
-    budget = progress * sum(lengths)
-    tip = None
-    for (pts, color, width), seg_len in zip(strokes, lengths):
-        if budget <= 0:
-            break
-        scaled = [(x * scale_x, y * scale_y) for x, y in pts]
-        w = max(1, int(width * scale_x))
-        if seg_len <= budget:
-            if width == 0:
-                draw.polygon(scaled, fill=color)
-            else:
-                draw.line(scaled, fill=color, width=w, joint="curve")
-            tip = scaled[-1]
-            budget -= seg_len
-        else:
-            acc = 0.0
-            partial = [scaled[0]]
-            for (x1, y1), (x2, y2) in zip(scaled, scaled[1:]):
-                seg = math.hypot(x2 - x1, y2 - y1)
-                if acc + seg <= budget:
-                    partial.append((x2, y2))
-                    acc += seg
-                else:
-                    t = (budget - acc) / seg if seg else 0
-                    partial.append((x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))
-                    break
-            if width == 0:
-                if len(partial) >= 3:
-                    draw.polygon(partial, fill=color)
-            else:
-                draw.line(partial, fill=color, width=w, joint="curve")
-            tip = partial[-1]
-            budget = 0
-    return tip
+def load_hand(target_width):
+    """Gerçekçi el sprite'ını yükler ve ölçekler."""
+    if os.path.exists(HAND_PNG):
+        sprite = Image.open(HAND_PNG).convert("RGBA")
+        meta = {"tip_x": 6, "tip_y": 6}
+        if os.path.exists(HAND_META):
+            with open(HAND_META, encoding="utf-8") as f:
+                meta.update(json.load(f))
+        factor = target_width / sprite.width
+        sprite = sprite.resize(
+            (max(1, int(sprite.width * factor)), max(1, int(sprite.height * factor))),
+            Image.LANCZOS
+        )
+        sprite = extend_arm(sprite)
+        shadow = Image.new("RGBA", sprite.size, (0, 0, 0, 0))
+        shadow.putalpha(sprite.getchannel("A").point(lambda a: int(a * 0.30)))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, int(14 * factor))))
+        return {
+            "image": sprite,
+            "shadow": shadow,
+            "shadow_offset": (int(18 * factor), int(26 * factor)),
+            "tip_x": meta["tip_x"] * factor,
+            "tip_y": meta["tip_y"] * factor,
+        }
+    img = make_hand_sprite(target_width / 1000.0)
+    scale = target_width / 1000.0
+    return {"image": img, "shadow": None, "tip_x": 6 * scale, "tip_y": 6 * scale}
+
+
+def extend_arm(img, y_frac=0.52, extra_ratio=1.15):
+    """El sprite'ının kolunu aşağı doğru yumuşakça uzatır.
+
+    Alt bölge dikeyde esnetilir; böylece ek yeri (dikiş) oluşmaz ve kalem
+    karenin ortasında çizerken kol kadrajın dışına taşar.
+    """
+    w, h = img.size
+    y0 = int(h * y_frac)
+    new_h = h + int(h * extra_ratio)
+    if y0 >= h - 2:
+        return img
+
+    out = Image.new("RGBA", (w, new_h), (0, 0, 0, 0))
+    out.paste(img.crop((0, 0, w, y0)), (0, 0))
+    lower = img.crop((0, y0, w, h)).resize((w, new_h - y0), Image.BICUBIC)
+    out.alpha_composite(lower, (0, y0))
+
+    # Yeni alt kenarda çok hafif sönümleme
+    fade = Image.linear_gradient("L").resize((w, new_h), Image.BILINEAR)
+    ramp = fade.point(lambda v: 255 if v < 205 else int(max(0, 255 - (v - 205) * 5.1)))
+    out.putalpha(Image.composite(out.getchannel("A"), Image.new("L", (w, new_h), 0), ramp))
+    return out
+
+
+def make_variants(sprite, angles=(-7.0, 0.0, 6.0), scales=(0.96, 1.0, 1.05)):
+    """Aynı el sprite'ından küçük açı/ölçek varyantları üretir.
+
+    Her sahne farklı bir varyant kullanır; böylece aynı el tekrar ediyormuş
+    hissi azalır. Döndürme kalem ucu etrafında yapılır, uç noktası korunur.
+    """
+    base_img = sprite["image"]
+    tip = (sprite["tip_x"], sprite["tip_y"])
+    pad = int(max(base_img.width, base_img.height) * 0.35)
+
+    variants = []
+    for angle in angles:
+        for scale in scales:
+            canvas = Image.new("RGBA", (base_img.width + pad * 2, base_img.height + pad * 2),
+                               (0, 0, 0, 0))
+            canvas.alpha_composite(base_img, (pad, pad))
+            tip_pos = (tip[0] + pad, tip[1] + pad)
+            rotated = canvas.rotate(angle, center=tip_pos, resample=Image.BICUBIC)
+            if scale != 1.0:
+                rotated = rotated.resize(
+                    (int(rotated.width * scale), int(rotated.height * scale)), Image.LANCZOS
+                )
+                tip_pos = (tip_pos[0] * scale, tip_pos[1] * scale)
+            bbox = rotated.getbbox()
+            if not bbox:
+                continue
+            cropped = rotated.crop(bbox)
+            variants.append({
+                "image": cropped,
+                "tip_x": tip_pos[0] - bbox[0],
+                "tip_y": tip_pos[1] - bbox[1],
+                "shadow": None,
+            })
+
+    out = []
+    for v in variants:
+        shadow = Image.new("RGBA", v["image"].size, (0, 0, 0, 0))
+        shadow.putalpha(v["image"].getchannel("A").point(lambda a: int(a * 0.28)))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(8))
+        v["shadow"] = shadow
+        v["shadow_offset"] = (10, 14)
+        out.append(v)
+    return out or [sprite]
 
 
 def paste_hand(frame, sprite, anchor, offset=(0, 0)):
@@ -173,41 +202,189 @@ def paste_hand(frame, sprite, anchor, offset=(0, 0)):
     frame.alpha_composite(sprite["image"], (x, y))
 
 
-ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-HAND_PNG = os.path.join(ASSETS, "hand_marker.png")
-HAND_META = os.path.join(ASSETS, "hand_marker.json")
+def _ease_in_out(t):
+    t = min(1.0, max(0.0, t))
+    return t * t * (3 - 2 * t)
 
 
-def load_hand(target_width):
-    """Gerçekçi el sprite'ını yükler ve ölçekler.
+class SceneRenderer:
+    """Bir sahnenin kare kare çizimini yönetir."""
 
-    `assets/hand_marker.png` yoksa vektörel el ile devam eder.
-    """
-    if os.path.exists(HAND_PNG):
-        sprite = Image.open(HAND_PNG).convert("RGBA")
-        meta = {"tip_x": 6, "tip_y": 6}
-        if os.path.exists(HAND_META):
-            with open(HAND_META, encoding="utf-8") as f:
-                meta.update(json.load(f))
-        factor = target_width / sprite.width
-        sprite = sprite.resize(
-            (max(1, int(sprite.width * factor)), max(1, int(sprite.height * factor))),
-            Image.LANCZOS
-        )
-        # Kâğıda düşen yumuşak gölge
-        shadow = Image.new("RGBA", sprite.size, (0, 0, 0, 0))
-        shadow.putalpha(sprite.getchannel("A").point(lambda a: int(a * 0.30)))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, int(14 * factor))))
-        return {
-            "image": sprite,
-            "shadow": shadow,
-            "shadow_offset": (int(18 * factor), int(26 * factor)),
-            "tip_x": meta["tip_x"] * factor,
-            "tip_y": meta["tip_y"] * factor,
-        }
-    img = make_hand_sprite(target_width / 1000.0)
-    return {"image": img, "shadow": None, "tip_x": 6 * (target_width / 1000.0),
-            "tip_y": 6 * (target_width / 1000.0)}
+    def __init__(self, scene_id, duration, fps, width, height, hand, seed=0):
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.duration = duration
+        self.n_frames = max(1, int(round(duration * fps)))
+        self.scale_x = width / 1080.0
+        self.scale_y = height / 1920.0
+        self.hand = hand
+
+        raw = get_scene(scene_id)
+        self.paper = make_paper(width, height, seed=13 + seed * 7).convert("RGBA")
+
+        rnd = random.Random(seed * 31 + 5)
+        self.items = []
+        for idx, (pts, color, width_px) in enumerate(raw):
+            scaled = [(x * self.scale_x, y * self.scale_y) for x, y in pts]
+            if width_px == 0:
+                xs = [p[0] for p in scaled]
+                ys = [p[1] for p in scaled]
+                pad = 10
+                bbox = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+                fx, fy, sprite, axis = make_fill(bbox, scaled, color, seed=idx)
+                self.items.append({
+                    "kind": "fill",
+                    "bbox": (fx, fy, fx + sprite.width, fy + sprite.height),
+                    "sprite": (fx, fy, sprite, axis),
+                    "start": scaled[0],
+                    "end": scaled[0],
+                    "draw_time": FILL_TIME,
+                    "length": 0.0,
+                })
+            else:
+                self.items.append({
+                    "kind": "stroke",
+                    "pts": scaled,
+                    "color": tuple(color),
+                    "width": width_px * self.scale_x * rnd.uniform(0.92, 1.08),
+                    "seed": idx * 17 + 3,
+                    "start": scaled[0],
+                    "end": scaled[-1],
+                    "length": path_length(scaled),
+                    "draw_time": max(0.22, path_length(scaled) / (DRAW_SPEED * self.scale_x)),
+                })
+
+        # Zamanlama: kalem havada gezinme + çizim süreleri
+        raw_total = 0.0
+        for i, item in enumerate(self.items):
+            travel = 0.0
+            if i > 0:
+                dist = math.hypot(item["start"][0] - self.items[i - 1]["end"][0],
+                                  item["start"][1] - self.items[i - 1]["end"][1])
+                travel = min(0.32, TRAVEL_TIME + dist / (4200.0 * self.scale_x))
+            item["travel"] = travel
+            raw_total += travel + item["draw_time"]
+
+        budget = max(0.6, DRAW_FRACTION * duration)
+        fit = budget / raw_total if raw_total > 0 else 1.0
+        # Her sahne kendi süresi içinde bitmeli: alt sınır çok düşük tutulur
+        fit = min(2.5, max(0.02, fit))
+
+        # Sahne başında el kadraja girer
+        self.entry_time = min(0.45, duration * 0.12) if hand is not None else 0.0
+        t = self.entry_time
+        for item in self.items:
+            t += item["travel"] * fit
+            item["t_start"] = t
+            t += item["draw_time"] * fit
+            item["t_end"] = t
+        self.draw_end = t
+
+        # Tamamlanan darbeler için katman
+        self.done_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        self.done_upto = 0
+
+    # ---------------------------------------------------------------- zaman
+
+    def state_at(self, t):
+        """(index, mod, oran) döndürür. mod: 'entry' | 'travel' | 'draw' | 'hold'."""
+        if t < getattr(self, "entry_time", 0.0):
+            return 0, "entry", t / self.entry_time if self.entry_time else 1.0
+        for i, item in enumerate(self.items):
+            if t < item["t_start"]:
+                return i, "travel", 0.0 if item["travel"] <= 0 else 1.0
+            if t < item["t_end"]:
+                span = item["t_end"] - item["t_start"]
+                return i, "draw", (t - item["t_start"]) / span if span > 0 else 1.0
+        return len(self.items), "hold", 1.0
+
+    def _complete_until(self, index):
+        """`index`'e kadar olan darbeleri kalıcı katmana işler."""
+        while self.done_upto < index and self.done_upto < len(self.items):
+            item = self.items[self.done_upto]
+            if item["kind"] == "fill":
+                fx, fy, sprite = item["sprite"][:3]
+                self.done_layer.alpha_composite(sprite, (fx, fy))
+            else:
+                draw_stroke(self.done_layer, item["pts"], item["color"],
+                            item["width"], seed=item["seed"])
+            self.done_upto += 1
+
+    # ---------------------------------------------------------------- çizim
+
+    def _tip_for(self, index, mode, frac):
+        """Kalem ucunun o andaki konumu (ve elin havada olup olmadığı)."""
+        if mode == "entry":
+            target = self.items[0]["start"] if self.items else (self.width / 2, self.height / 2)
+            start = (self.width * 0.82, self.height * 1.04)
+            e = _ease_in_out(frac)
+            return (start[0] + (target[0] - start[0]) * e,
+                    start[1] + (target[1] - start[1]) * e)
+
+        if index <= 0 and mode != "draw":
+            return self.items[0]["start"] if self.items else (self.width / 2, self.height / 2)
+
+        if mode == "draw":
+            item = self.items[index]
+            if item["kind"] == "fill":
+                x0, y0, x1, y1 = item["bbox"]
+                return (x0 + (x1 - x0) * min(1.0, frac), y0 + (y1 - y0) * 0.55)
+            vis = truncate(item["pts"], frac)
+            return vis[-1] if vis else item["start"]
+
+        # travel: bir önceki darbenin bitişinden yenisinin başına
+        if index >= len(self.items):
+            return None
+        prev_end = self.items[index - 1]["end"] if index > 0 else self.items[0]["start"]
+        nxt = self.items[index]["start"]
+        e = _ease_in_out(frac)
+        lift = math.sin(math.pi * min(1.0, frac)) * 16 * self.scale_x  # kalem havada
+        return (prev_end[0] + (nxt[0] - prev_end[0]) * e - lift * 0.5,
+                prev_end[1] + (nxt[1] - prev_end[1]) * e - lift)
+
+    def frame(self, t):
+        self._complete_until(self.state_at(t)[0])
+
+        frame = self.paper.copy()
+        if self.done_upto > 0:
+            frame.alpha_composite(self.done_layer)
+
+        index, mode, frac = self.state_at(t)
+
+        if mode == "draw" and index < len(self.items):
+            item = self.items[index]
+            if item["kind"] == "fill":
+                draw_fill_reveal(frame, item["sprite"], frac)
+            else:
+                visible = truncate(item["pts"], frac)
+                if visible:
+                    xs = [p[0] for p in visible]
+                    ys = [p[1] for p in visible]
+                    m = int(item["width"] * 3 + 24)
+                    bx, by = int(min(xs) - m), int(min(ys) - m)
+                    tile = Image.new("RGBA",
+                                     (int(max(xs) - min(xs) + 2 * m), int(max(ys) - min(ys) + 2 * m)),
+                                     (0, 0, 0, 0))
+                    draw_partial(tile, visible, item["color"], item["width"], 1.0,
+                                 seed=item["seed"])
+                    frame.alpha_composite(tile, (bx, by))
+
+        if self.hand is not None:
+            tip = self._tip_for(index, mode, frac)
+            if mode == "hold":
+                # Sahne sonu: el kareyi yumuşak bir hareketle terk eder
+                leave = (t - self.draw_end) / EXIT_TIME if self.draw_end else 1.0
+                if leave < 1.0 and self.items:
+                    last = self.items[-1]["end"]
+                    e = _ease_in_out(leave)
+                    paste_hand(frame, self.hand, last,
+                               offset=(e * 900 * self.scale_x, e * 780 * self.scale_y))
+            elif tip is not None:
+                wobble = math.sin(t * 9.0) * 2.2 * self.scale_x
+                paste_hand(frame, self.hand, tip, offset=(wobble, wobble * 0.35))
+
+        return frame
 
 
 def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None):
@@ -226,49 +403,25 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
         raise SystemExit("manifest içinde sahne yok")
 
     os.makedirs(out_dir, exist_ok=True)
-    scale_x = width / 1080.0
-    scale_y = height / 1920.0
-    hand = load_hand(width * 0.66) if with_hand else None
+    hand_variants = make_variants(load_hand(width * 0.56)) if with_hand else []
     frame_idx = 0
     elapsed = 0.0
 
-    for scene in scenes:
+    for scene_no, scene in enumerate(scenes):
         scene_id = scene.get("id") or pick_scene_for_text(scene.get("text", ""))
         duration = float(scene.get("duration", 3.0))
-        n_frames = max(1, int(round(duration * fps)))
-        strokes = get_scene(scene_id)
-        lengths = stroke_lengths(strokes)
-        base = paper_background(width, height).convert("RGBA")
-        scene_start = elapsed
+        hand = hand_variants[scene_no % len(hand_variants)] if hand_variants else None
+        renderer = SceneRenderer(scene_id, duration, fps, width, height, hand, seed=scene_no)
 
-        for i in range(n_frames):
-            t = i / max(1, n_frames - 1)
-            progress = min(1.0, t / DRAW_FRACTION)
-            frame = base.copy()
-            draw = ImageDraw.Draw(frame)
-            tip = draw_progress(draw, strokes, lengths, progress, scale_x, scale_y)
-
-            if hand:
-                if progress < 1.0 and tip:
-                    # Çizerken: kalem ucu hattın ucunda, hafif titrek
-                    wobble = math.sin(i * 0.9) * 3 * scale_x
-                    paste_hand(frame, hand, tip, offset=(wobble, wobble * 0.4))
-                elif progress >= 1.0:
-                    # Sahne sonunda el kareyi terk eder
-                    leave = min(1.0, (t - DRAW_FRACTION) / (1 - DRAW_FRACTION))
-                    if leave < 0.85:
-                        last = lengths and strokes[-1][0][-1]
-                        anchor = (last[0] * scale_x, last[1] * scale_y)
-                        shift = leave * 1400 * scale_x
-                        paste_hand(frame, hand, anchor, offset=(shift, shift * 0.9))
-
+        for i in range(renderer.n_frames):
+            t = i / fps
+            frame = renderer.frame(t)
             if subs:
-                subs.draw(frame, scene_start + i / fps)
-
+                subs.draw(frame, elapsed + t)
             frame.convert("RGB").save(os.path.join(out_dir, f"frame_{frame_idx:05d}.png"))
             frame_idx += 1
 
-        elapsed = scene_start + n_frames / fps
+        elapsed += renderer.n_frames / fps
 
     print(f"OK {frame_idx} kare üretildi -> {out_dir}")
 

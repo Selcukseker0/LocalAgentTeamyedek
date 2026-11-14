@@ -23,6 +23,10 @@ MILK_BLUE = (66, 133, 199)
 BREAD = (196, 138, 74)
 BREAD_DARK = (120, 72, 32)
 GRAY = (120, 120, 120)
+GREEN = (76, 156, 96)
+RED = (198, 74, 62)
+ORANGE = (232, 142, 46)
+SKY = (118, 176, 220)
 
 # Sahne kimliği -> Türkçe anahtar kelimeler (ScriptAgent sahne veremezse yedek eşleme)
 SCENE_KEYWORDS = {
@@ -40,6 +44,14 @@ SCENE_KEYWORDS = {
     "book": ["kitap", "okul", "ders", "öğren", "ogren", "bilgi"],
     "check": ["doğru", "dogru", "evet", "onay", "başarı", "basari"],
     "cross": ["yanlış", "yanlis", "hayır", "hata", "dur"],
+    "bee": ["arı", "ari", "bal", "petek", "doğa", "doga", "çiçek", "cicek"],
+    "phone": ["telefon", "uygulama", "sosyal medya", "internet", "ekran", "yapay zeka"],
+    "chart": ["grafik", "artış", "artis", "istatistik", "büyüme", "buyume", "oran", "ekonomi"],
+    "shield": ["koruma", "güvenlik", "guvenlik", "sağlık", "saglik", "bağışıklık", "bagisiklik"],
+    "flame": ["ateş", "ates", "sıcak", "sicak", "enerji", "yangın", "yangin", "ısı", "isi"],
+    "factory": ["fabrika", "üretim", "uretim", "sanayi", "kirlilik", "ihracat"],
+    "cloud_rain": ["yağmur", "yagmur", "hava", "iklim", "bulut", "kuraklık", "kuraklik"],
+    "shopping": ["alışveriş", "alisveris", "fiyat", "indirim", "tüketim", "tuketim", "market"],
 }
 
 
@@ -327,6 +339,160 @@ def scene_generic():
     return s
 
 
+
+def scene_bee():
+    """Petek + arı (bal, doğa, arıcılık)."""
+    s = []
+    # Petek
+    cx, cy, r = 430, 620, 90
+    hexes = [(0, 0), (1, 0), (0.5, 0.85), (-0.5, 0.85), (1.5, 0.85), (0.5, -0.85), (-0.5, -0.85)]
+    for hx, hy in hexes:
+        px, py = cx + hx * r * 1.5, cy + hy * r * 1.6
+        pts = [(px + r * math.cos(math.radians(60 * i + 30)),
+                py + r * math.sin(math.radians(60 * i + 30))) for i in range(6)]
+        s.append((_poly(pts), BLACK, 8))
+        s.append((_poly(pts), HONEY, 0))
+    # Arı gövdesi
+    s.append((_ellipse(760, 980, 150, 100), HONEY, 0))
+    s.append((_ellipse(760, 980, 150, 100), BLACK, 12))
+    for x in (700, 748, 796):
+        s.append((_bezier((x, 890), (x + 12, 940), (x + 12, 1020), (x, 1070), 10), BLACK, 12))
+    s.append((_ellipse(620, 960, 55, 55), BLACK, 10))          # baş
+    s.append((_line((600, 910), (560, 860)), BLACK, 9))        # anten
+    s.append((_line((640, 906), (660, 850)), BLACK, 9))
+    # Kanatlar
+    s.append((_ellipse(750, 870, 95, 45), SKY, 0))
+    s.append((_ellipse(750, 870, 95, 45), BLACK, 9))
+    s.append((_ellipse(850, 890, 80, 38), SKY, 0))
+    s.append((_ellipse(850, 890, 80, 38), BLACK, 9))
+    # Uçuş izi
+    s.append((_bezier((150, 1100), (300, 1000), (420, 1120), (560, 1010), 24), GRAY, 7))
+    return s
+
+
+def scene_phone():
+    """Telefon / uygulama (teknoloji, sosyal medya)."""
+    s = []
+    s.append((_rect(370, 420, 710, 1240), BLACK, 14))
+    s.append((_rect(400, 470, 680, 1180), BLACK, 9))
+    s.append((_line((500, 445), (580, 445)), BLACK, 9))
+    # Sohbet balonları
+    s.append((_rect(430, 540, 640, 660), SKY, 0))
+    s.append((_rect(430, 540, 640, 660), BLACK, 9))
+    s.append((_rect(470, 720, 650, 840), GRAY, 0))
+    s.append((_rect(470, 720, 650, 840), BLACK, 9))
+    s.append((_rect(430, 900, 610, 1020), GREEN, 0))
+    s.append((_rect(430, 900, 610, 1020), BLACK, 9))
+    # Ana ekran tuşu
+    s.append((_line((500, 1140), (580, 1140)), BLACK, 10))
+    return s
+
+
+def scene_chart():
+    """Yükselen grafik (ekonomi, büyüme, istatistik)."""
+    s = []
+    s.append((_line((200, 1250), (880, 1250)), BLACK, 12))       # x ekseni
+    s.append((_line((200, 1250), (200, 560)), BLACK, 12))        # y ekseni
+    for i, (x, h) in enumerate([(280, 220), (400, 380), (520, 300), (640, 520), (760, 680)]):
+        top = 1250 - h
+        s.append((_rect(x, top, x + 80, 1250), GREEN if i % 2 == 0 else HONEY, 0))
+        s.append((_rect(x, top, x + 80, 1250), BLACK, 9))
+    # Trend oku
+    s.append((_bezier((250, 900), (420, 860), (600, 720), (800, 600), 22), BLACK, 10))
+    s.append((_poly([(800, 600), (760, 590), (786, 640)]), BLACK, 0))
+    return s
+
+
+def scene_shield():
+    """Kalkan (koruma, güvenlik, sağlık)."""
+    s = []
+    outline = _line((390, 570), (690, 570), 14)
+    outline += _bezier((690, 570), (752, 800), (664, 1100), (540, 1245), 22)
+    outline += _bezier((540, 1245), (416, 1100), (328, 800), (390, 570), 22)
+    outline.append((390, 570))
+    s.append((outline, SKY, 0))
+    s.append((outline, BLACK, 13))
+    s.append((_line((432, 900), (508, 986), 14), BLACK, 17))
+    s.append((_line((508, 986), (676, 778), 18), BLACK, 17))
+    return s
+
+
+def scene_flame():
+    """Alev (enerji, sıcaklık, yangın)."""
+    s = []
+    outer = _bezier((540, 520), (700, 640), (760, 860), (700, 1080), 20)
+    outer += _bezier((700, 1080), (660, 1240), (600, 1300), (540, 1300), 16)
+    outer += _bezier((540, 1300), (470, 1300), (420, 1240), (400, 1080), 16)
+    outer += _bezier((400, 1080), (380, 900), (450, 700), (540, 520), 20)
+    s.append((_poly(outer), ORANGE, 0))
+    s.append((_poly(outer), BLACK, 13))
+    inner = _bezier((540, 780), (620, 880), (640, 1000), (600, 1120), 16)
+    inner += _bezier((600, 1120), (570, 1180), (510, 1180), (480, 1120), 12)
+    inner += _bezier((480, 1120), (440, 1010), (470, 870), (540, 780), 16)
+    s.append((_poly(inner), HONEY, 0))
+    s.append((_poly(inner), BLACK, 9))
+    return s
+
+
+def scene_factory():
+    """Fabrika (üretim, sanayi, kirlilik)."""
+    s = []
+    s.append((_rect(220, 900, 860, 1300), BLACK, 13))
+    for x in (300, 430, 560):
+        s.append((_rect(x, 620, x + 90, 900), BLACK, 12))
+        s.append((_ellipse(x + 45, 600, 60, 24), GRAY, 0))
+        s.append((_ellipse(x + 45, 600, 60, 24), BLACK, 8))
+    # Duman
+    for cx, cy, r in [(360, 500, 55), (470, 430, 45), (600, 480, 60), (700, 400, 40)]:
+        s.append((_ellipse(cx, cy, r, r * 0.8), (200, 200, 198), 0))
+        s.append((_ellipse(cx, cy, r, r * 0.8), BLACK, 8))
+    # Kapı ve pencereler
+    s.append((_rect(480, 1080, 600, 1300), BLACK, 11))
+    for x in (290, 700):
+        s.append((_rect(x, 980, x + 90, 1070), SKY, 0))
+        s.append((_rect(x, 980, x + 90, 1070), BLACK, 9))
+    return s
+
+
+def scene_cloud_rain():
+    """Bulut ve yağmur (hava durumu, iklim)."""
+    s = []
+    cloud = _bezier((330, 800), (296, 700), (356, 618), (440, 644), 14)
+    cloud += _bezier((440, 644), (452, 512), (602, 496), (654, 604), 14)
+    cloud += _bezier((654, 604), (724, 556), (792, 620), (770, 704), 12)
+    cloud += _bezier((770, 704), (818, 762), (786, 812), (716, 800), 10)
+    cloud += _line((716, 800), (330, 800), 6)
+    s.append((cloud, (228, 233, 236), 0))
+    s.append((cloud, BLACK, 12))
+    # Yağmur damlaları
+    for i, x in enumerate((400, 500, 600, 700)):
+        y = 900 if i % 2 == 0 else 960
+        s.append((_drop(x, y, 46, 96), SKY, 0))
+        s.append((_drop(x, y, 46, 96), BLACK, 8))
+        s.append((_drop(x + 18, y + 170, 40, 84), SKY, 0))
+        s.append((_drop(x + 18, y + 170, 40, 84), BLACK, 8))
+    return s
+
+
+def scene_shopping():
+    """Alışveriş çantası + madeni para (fiyat, tüketim)."""
+    s = []
+    s.append((_rect(360, 720, 760, 1260), HONEY, 0))
+    s.append((_rect(360, 720, 760, 1260), BLACK, 13))
+    # Sap
+    s.append((_bezier((470, 720), (470, 600), (650, 600), (650, 720), 18), BLACK, 12))
+    # Etiket
+    s.append((_rect(470, 900, 650, 1080), (255, 255, 255), 0))
+    s.append((_rect(470, 900, 650, 1080), BLACK, 10))
+    s.append((_line((510, 960), (610, 960)), BLACK, 8))
+    s.append((_line((510, 1010), (580, 1010)), BLACK, 8))
+    # Para
+    s.append((_ellipse(800, 1140, 90, 90), HONEY, 0))
+    s.append((_ellipse(800, 1140, 90, 90), BLACK, 11))
+    s.append((_line((800, 1090), (800, 1190)), BLACK, 9))
+    return s
+
+
 SCENES = {
     "egyptian_vase": scene_egyptian_vase,
     "honey_pot": scene_honey_pot,
@@ -342,6 +508,14 @@ SCENES = {
     "book": scene_book,
     "check": scene_check,
     "cross": scene_cross,
+    "bee": scene_bee,
+    "phone": scene_phone,
+    "chart": scene_chart,
+    "shield": scene_shield,
+    "flame": scene_flame,
+    "factory": scene_factory,
+    "cloud_rain": scene_cloud_rain,
+    "shopping": scene_shopping,
     "generic": scene_generic,
 }
 

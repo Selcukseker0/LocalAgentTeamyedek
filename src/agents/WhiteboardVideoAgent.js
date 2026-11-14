@@ -34,6 +34,14 @@ const SCENE_HINTS = {
   book: 'Kitap (bilgi, eğitim)',
   check: 'Onay işareti (doğru, evet)',
   cross: 'Çarpı (yanlış, hayır)',
+  bee: 'Arı ve petek (doğa, arıcılık)',
+  phone: 'Telefon / uygulama (teknoloji, sosyal medya)',
+  chart: 'Yükselen grafik (ekonomi, büyüme, istatistik)',
+  shield: 'Kalkan (koruma, güvenlik, sağlık)',
+  flame: 'Alev (enerji, sıcaklık, yangın)',
+  factory: 'Fabrika (üretim, sanayi, kirlilik)',
+  cloud_rain: 'Bulut ve yağmur (hava, iklim)',
+  shopping: 'Alışveriş çantası (fiyat, tüketim)',
   generic: 'Konuya uymayan nötr çizim'
 };
 
@@ -220,7 +228,15 @@ Yalnızca şu JSON biçimini döndür:
       ['heart', ['kalp', 'sevgi', 'sağlık', 'saglik']],
       ['money', ['para', 'fiyat', 'ekonomi', 'zengin']],
       ['book', ['kitap', 'okul', 'bilgi', 'öğren', 'ogren']],
-      ['question', ['neden', 'nasıl', 'nasil', 'merak']]
+      ['question', ['neden', 'nasıl', 'nasil', 'merak']],
+      ['bee', ['arı', 'ari', 'petek', 'çiçek', 'cicek']],
+      ['phone', ['telefon', 'uygulama', 'internet', 'ekran', 'yapay zeka', 'sosyal medya']],
+      ['chart', ['grafik', 'artış', 'artis', 'istatistik', 'büyüme', 'buyume', 'oran']],
+      ['shield', ['koruma', 'güvenlik', 'guvenlik', 'bağışıklık', 'bagisiklik']],
+      ['flame', ['ateş', 'ates', 'enerji', 'yangın', 'yangin', 'ısı']],
+      ['factory', ['fabrika', 'üretim', 'uretim', 'sanayi', 'kirlilik', 'ihracat']],
+      ['cloud_rain', ['yağmur', 'yagmur', 'iklim', 'bulut', 'kuraklık', 'kuraklik', 'hava']],
+      ['shopping', ['alışveriş', 'alisveris', 'indirim', 'tüketim', 'tuketim', 'market']]
     ];
 
     const scores = rules.map(([id, keywords]) => {
@@ -236,12 +252,16 @@ Yalnızca şu JSON biçimini döndür:
     const bestOther = Math.max(
       0, ...scores.filter((s) => s.id !== 'question').map((s) => s.score)
     );
-    if (/\?\s*$/.test(t) && bestOther < 2) {
+    if (/\?\s*$/.test(t) && bestOther === 0) {
       const q = scores.find((s) => s.id === 'question');
       if (q) q.score = bestOther + 1;
     }
 
-    scores.sort((a, b) => b.score - a.score);
+    scores.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      // Eşit puanda somut sahne, soru işaretine tercih edilir
+      return (a.id === 'question' ? 1 : 0) - (b.id === 'question' ? 1 : 0);
+    });
     const best = scores.find((s) => s.score > 0);
     if (!best) return 'question';
     // Aynı sahne üst üste gelmesin
