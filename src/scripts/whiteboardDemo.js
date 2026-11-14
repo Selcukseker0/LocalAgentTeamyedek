@@ -9,6 +9,7 @@
  * Ses dosyası verilmezse video sessiz üretilir (altyazılar yine gömülür).
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
@@ -55,6 +56,13 @@ const DEFAULT_NARRATION =
   'Birincisi, bal çok az su içerir. Bakteriler susuz ortamda çoğalamaz. ' +
   'İkincisi, bal asidik ve şeker oranı çok yüksek. Bu da bakterileri kurutur. ' +
   'Peki balın bozulmaması için tek şart bu mu?';
+
+function stamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-` +
+    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
 
 function argValue(name, fallback = null) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -122,15 +130,25 @@ async function main() {
     if (!exists) throw new Error(`Ses dosyası bulunamadı: ${audioPath}`);
   }
 
-  const { videoPath, duration } = await agent.renderShorts({
+  const fileName = `shorts_whiteboard_${stamp()}.mp4`;
+  const { videoPath, duration, frameCount, previewPath, scenes } = await agent.renderShorts({
     audioPath: audioArg ? path.resolve(audioArg) : null,
     srtPath,
     narration,
-    workDir: outDir
+    workDir: outDir,
+    fileName
   });
+
+  const stat = await fs.stat(videoPath);
+  const hash = crypto.createHash('sha1').update(await fs.readFile(videoPath))
+    .digest('hex').slice(0, 12);
 
   console.log(`\n✅ Video hazır: ${videoPath}`);
   console.log(`   Süre: ${duration.toFixed(1)}s | 1080x1920 | ${audioArg ? 'sesli' : 'sessiz'}`);
+  console.log(`   Kare: ${frameCount} | Boyut: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+  console.log(`   SHA1: ${hash}  (her çalıştırmada farklı olur)`);
+  console.log(`   Sahneler: ${(scenes || []).join(' → ')}`);
+  if (previewPath) console.log(`   Önizleme: ${previewPath}`);
 }
 
 main().catch((err) => {
