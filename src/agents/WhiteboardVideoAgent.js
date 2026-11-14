@@ -40,7 +40,11 @@ const SCENE_HINTS = {
   shield: 'Kalkan (koruma, güvenlik, sağlık)',
   flame: 'Alev (enerji, sıcaklık, yangın)',
   factory: 'Fabrika (üretim, sanayi, kirlilik)',
-  cloud_rain: 'Bulut ve yağmur (hava, iklim)',
+  cloud_rain: 'Bulut ve yağmur (hava, iklim, soğuk)',
+  sky: 'Gökyüzü, ufuk ve güneş (gündüz, mavi, hava)',
+  rainbow: 'Gökkuşağı (renk, ışık, spektrum)',
+  planet: 'Gezegen / dünya (uzay, astronomi, yıldız)',
+  coffee: 'Kahve fincanı ve çekirdek (kahve, kafein, sabah rutini)',
   shopping: 'Alışveriş çantası (fiyat, tüketim)',
   generic: 'Konuya uymayan nötr çizim'
 };
@@ -214,32 +218,49 @@ Yalnızca şu JSON biçimini döndür:
     return timeline.map(() => null);
   }
 
-  /** Sahne yoksa basit anahtar kelime eşlemesi (Türkçe ekleri tolere eder). */
-  fallbackScene(text, previous = null) {
+  /** Konu bir sahneyi doyurduğunda aynı görsel aileden devam edilir. */
+  static SCENE_FAMILIES = [
+    ['nature', ['water_drop', 'sky', 'sun', 'rainbow', 'planet', 'cloud_rain', 'flame', 'bee']],
+    ['food', ['honey_pot', 'milk_bread_honey', 'coffee', 'water_drop', 'bacteria_honey', 'bee', 'egyptian_vase']],
+    ['science', ['bacteria_honey', 'chart', 'book', 'planet', 'rainbow', 'clock']],
+    ['daily', ['house', 'phone', 'money', 'shopping', 'book', 'milk_bread_honey']],
+    ['human', ['heart', 'shield', 'clock', 'question']],
+    ['industry', ['factory', 'money', 'chart', 'shopping', 'shield', 'check', 'cross']]
+  ];
+
+  /** Sahne yoksa anahtar kelime eşlemesi (Türkçe ekleri tolere eder). */
+  scoreScenes(text) {
     const t = (text || '').toLocaleLowerCase('tr');
     const rules = [
-      ['egyptian_vase', ['mısır', 'misir', 'mezar', 'vazo', 'firavun', 'antik', 'hiyeroglif']],
-      ['bacteria_honey', ['bakteri', 'mikrop', 'kurut', 'mikroskop']],
-      ['water_drop', ['su', 'damla', 'nem', 'ıslak', 'islak']],
-      ['milk_bread_honey', ['süt', 'sut', 'ekmek', 'bozul', 'gıda', 'gida']],
-      ['honey_pot', ['bal', 'reçel', 'rec el', 'tatlı', 'tatli']],
-      ['clock', ['yıl', 'yil', 'zaman', 'saat', 'gün', 'gun', 'süre', 'sure']],
-      ['sun', ['güneş', 'gunes', 'sıcak', 'sicak']],
-      ['heart', ['kalp', 'sevgi', 'sağlık', 'saglik']],
-      ['money', ['para', 'fiyat', 'ekonomi', 'zengin']],
-      ['book', ['kitap', 'okul', 'bilgi', 'öğren', 'ogren']],
-      ['question', ['neden', 'nasıl', 'nasil', 'merak']],
-      ['bee', ['arı', 'ari', 'petek', 'çiçek', 'cicek']],
+      ['egyptian_vase', ['mısır', 'misir', 'mezar', 'vazo', 'firavun', 'antik', 'hiyeroglif', 'piramit']],
+      ['bacteria_honey', ['bakteri', 'mikrop', 'kurut', 'mikroskop', 'virüs', 'virus']],
+      ['water_drop', ['su', 'damla', 'nem', 'ıslak', 'islak', 'sulu', 'buz', 'don']],
+      ['milk_bread_honey', ['süt', 'sut', 'ekmek', 'bozul', 'gıda', 'gida', 'yemek']],
+      ['honey_pot', ['bal', 'reçel', 'tatlı', 'şeker', 'seker', 'arı', 'ari', 'petek']],
+      ['clock', ['saat', 'zaman', 'yıl', 'yil', 'süre', 'sure', 'dakika', 'saniye']],
+      ['sun', ['güneş', 'gunes', 'sıcak', 'sicak', 'yaz', 'ışın', 'isin', 'parlak']],
+      ['sky', ['gökyüzü', 'gokyuzu', 'ufuk', 'gündüz', 'gunduz', 'mavi', 'hava']],
+      ['rainbow', ['gökkuşağı', 'gokkusagi', 'renk', 'spektrum', 'ışık', 'isik', 'tayf']],
+      ['coffee', ['kahve', 'çekirdek', 'cekirdek', 'fincan', 'bardak', 'kafein', 'barista', 'koku', 'sabah', 'kavur']],
+      ['planet', ['gezegen', 'dünya', 'dunya', 'uzay', 'mars', 'yıldız', 'yildiz', 'astronot', 'ay']],
+      ['house', ['ev', 'konut', 'kira', 'emlak', 'aile', 'kapı', 'kapi', 'araba', 'bina', 'oda', 'mutfak']],
+      ['check', ['doğru', 'dogru', 'tamam', 'onay', 'çözüm', 'cozum', 'başarı', 'basari']],
+      ['cross', ['yanlış', 'yanlis', 'hata', 'risk', 'tehlike', 'zarar', 'yasak']],
+      ['heart', ['kalp', 'sevgi', 'sağlık', 'saglik', 'duygu']],
+      ['money', ['para', 'fiyat', 'ekonomi', 'zengin', 'maaş', 'maas']],
+      ['book', ['kitap', 'okul', 'bilgi', 'öğren', 'ogren', 'eğitim', 'egitim']],
+      ['bee', ['çiçek', 'cicek', 'kovan', 'doğa', 'doga']],
       ['phone', ['telefon', 'uygulama', 'internet', 'ekran', 'yapay zeka', 'sosyal medya']],
-      ['chart', ['grafik', 'artış', 'artis', 'istatistik', 'büyüme', 'buyume', 'oran']],
-      ['shield', ['koruma', 'güvenlik', 'guvenlik', 'bağışıklık', 'bagisiklik']],
-      ['flame', ['ateş', 'ates', 'enerji', 'yangın', 'yangin', 'ısı']],
+      ['chart', ['grafik', 'artış', 'artis', 'istatistik', 'büyüme', 'buyume', 'oran', 'ölçüm', 'olcum', 'araştırma', 'arastirma', 'bilim insanı']],
+      ['shield', ['koruma', 'güvenlik', 'guvenlik', 'bağışıklık', 'bagisiklik', 'savunma']],
+      ['flame', ['ateş', 'ates', 'enerji', 'yangın', 'yangin', 'ısı', 'isi', 'yakıt', 'yakit']],
       ['factory', ['fabrika', 'üretim', 'uretim', 'sanayi', 'kirlilik', 'ihracat']],
-      ['cloud_rain', ['yağmur', 'yagmur', 'iklim', 'bulut', 'kuraklık', 'kuraklik', 'hava']],
-      ['shopping', ['alışveriş', 'alisveris', 'indirim', 'tüketim', 'tuketim', 'market']]
+      ['cloud_rain', ['yağmur', 'yagmur', 'iklim', 'bulut', 'kuraklık', 'kuraklik', 'fırtına', 'firtina', 'kar', 'soğuk', 'soguk']],
+      ['shopping', ['alışveriş', 'alisveris', 'indirim', 'tüketim', 'tuketim', 'market']],
+      ['question', ['neden', 'nasıl', 'nasil', 'merak', 'peki']]
     ];
 
-    const scores = rules.map(([id, keywords]) => {
+    const scored = rules.map(([id, keywords]) => {
       const score = keywords.reduce((sum, kw) => {
         const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const pattern = new RegExp(`(?<![\\p{L}])${escaped}`, 'iu');
@@ -248,28 +269,38 @@ Yalnızca şu JSON biçimini döndür:
       return { id, score };
     });
 
-    // Soru cümlesi ama başka güçlü bir sahne yoksa soru işareti çizilir
-    const bestOther = Math.max(
-      0, ...scores.filter((s) => s.id !== 'question').map((s) => s.score)
-    );
+    // Soru cümlesi ama somut bir sahne yoksa soru işareti
+    const bestOther = Math.max(0, ...scored.filter((s) => s.id !== 'question').map((s) => s.score));
     if (/\?\s*$/.test(t) && bestOther === 0) {
-      const q = scores.find((s) => s.id === 'question');
-      if (q) q.score = bestOther + 1;
+      const q = scored.find((s) => s.id === 'question');
+      if (q) q.score = 1;
     }
 
-    scores.sort((a, b) => {
+    scored.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // Eşit puanda somut sahne, soru işaretine tercih edilir
       return (a.id === 'question' ? 1 : 0) - (b.id === 'question' ? 1 : 0);
     });
-    const best = scores.find((s) => s.score > 0);
-    if (!best) return 'question';
-    // Aynı sahne üst üste gelmesin
-    if (best.id === previous) {
-      const alt = scores.find((s) => s.score > 0 && s.id !== previous);
-      return alt ? alt.id : best.id;
-    }
-    return best.id;
+
+    return scored.filter((s) => s.score > 0).map((s) => s.id);
+  }
+
+  /** Doymuş sahne için aynı aileden en az kullanılan alternatifi seçer. */
+  relatedScene(id, usage, previous = null) {
+    const families = WhiteboardVideoAgent.SCENE_FAMILIES;
+    const family = families.find(([, list]) => list.includes(id));
+    const pool = family ? family[1] : families[3][1];
+    const candidates = pool
+      .filter((candidate) => candidate !== previous)
+      .sort((a, b) => (usage.get(a) || 0) - (usage.get(b) || 0));
+    return candidates.find((candidate) => (usage.get(candidate) || 0) < 2) || candidates[0] || null;
+  }
+
+  /** Geriye dönük uyumluluk: en yüksek puanlı sahne. */
+  fallbackScene(text, previous = null) {
+    const ranked = this.scoreScenes(text);
+    if (ranked.length === 0) return 'question';
+    if (previous && ranked[0] === previous && ranked.length > 1) return ranked[1];
+    return ranked[0];
   }
 
   // -------------------------------------------------------------- görüntü
@@ -344,7 +375,7 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
    */
   async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
-    fileName = 'shorts_whiteboard.mp4' }) {
+    sceneHints = null, fileName = 'shorts_whiteboard.mp4' }) {
     // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
     await fs.rm(framesDir, { recursive: true, force: true });
@@ -369,10 +400,40 @@ Yalnızca şu JSON biçimini döndür:
     } else {
       const available = await this.listScenes();
       const planned = await this.planScenes(timeline, available);
+      const hints = Array.isArray(sceneHints) && sceneHints.length === timeline.length
+        ? sceneHints
+        : null;
       sceneIds = [];
+      const usage = new Map();
+
       for (let i = 0; i < timeline.length; i++) {
         const previous = sceneIds[i - 1] || null;
-        sceneIds.push(planned[i] || this.fallbackScene(timeline[i].text, previous));
+        let id = planned[i];
+
+        const ranked = this.scoreScenes(hints ? hints[i] : timeline[i].text);
+        const useCount = (candidate) => usage.get(candidate) || 0;
+
+        if (!id) {
+          if (ranked.length === 0) {
+            // Konu hiçbir sahneye uymadı: soru işareti, doyarsa sakin bir dolgu sahnesi
+            id = useCount('question') < 2
+              ? 'question'
+              : ['book', 'chart', 'sky', 'cloud_rain', 'sun'].find((c) => useCount(c) < 2) || 'question';
+          } else {
+            // Aynı sahne üst üste gelmesin, videoda en fazla 2 kez kullanılsın
+            id = ranked.find((candidate) => candidate !== previous && useCount(candidate) < 2) ||
+              this.relatedScene(ranked[0], usage, previous) ||
+              ranked.find((candidate) => useCount(candidate) < 2) ||
+              ranked[0];
+          }
+        } else if (useCount(id) >= 3) {
+          // Ollama aynı sahneyi çok tekrar ettirdiyse alternatife geç
+          id = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2) ||
+            (previous === 'question' ? 'generic' : 'question');
+        }
+
+        usage.set(id, useCount(id) + 1);
+        sceneIds.push(id);
       }
     }
 

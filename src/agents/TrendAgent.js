@@ -18,6 +18,36 @@ const RSS_SOURCES = [
   }
 ];
 
+// Ollama/RSS olmadığında da tekrar etmeyen, çizilebilir "ilginç bilgi" konuları
+const EVERGREEN_TOPICS = [
+  { topic: 'Uzayda neden ses duyulmaz?', category: 'bilim' },
+  { topic: 'Karıncalar kendi ağırlıklarının kaç katını taşır?', category: 'ilginç bilgiler' },
+  { topic: 'Neden esneriz ve esnemek bulaşıcı mıdır?', category: 'bilim' },
+  { topic: 'Osmanlı ordusu neden Mehter marşıyla yürürdü?', category: 'tarih' },
+  { topic: 'Kahve dünyayı nasıl değiştirdi?', category: 'tarih' },
+  { topic: 'Buz neden kaygandır?', category: 'bilim' },
+  { topic: 'İnsan beyni günde kaç düşünce üretir?', category: 'bilim' },
+  { topic: 'Neden uçağımızın penceresi yuvarlak?', category: 'teknoloji' },
+  { topic: 'Deniz suyu neden tuzludur?', category: 'bilim' },
+  { topic: 'Gökyüzü neden mavidir?', category: 'bilim' },
+  { topic: 'Mısır piramitleri nasıl inşa edildi?', category: 'tarih' },
+  { topic: 'Neden bazı insanlar sivrisinekleri çeker?', category: 'ilginç bilgiler' },
+  { topic: 'Bir gün gerçekten 24 saat mi?', category: 'bilim' },
+  { topic: 'Neden rüya görürüz?', category: 'bilim' },
+  { topic: 'Dünyanın en derin çukuru nerede?', category: 'gizem' },
+  { topic: 'Neden yaşlanırız?', category: 'bilim' },
+  { topic: 'Elektrikli araç bataryası neden yavaş şarj olur?', category: 'teknoloji' },
+  { topic: 'Neden bazı yemekler acıdır?', category: 'ilginç bilgiler' },
+  { topic: 'İstanbul fethinde hangi teknoloji kullanıldı?', category: 'tarih' },
+  { topic: 'Neden aynada kendimizi tanırız?', category: 'bilim' },
+  { topic: 'Deniz fenerleri gemilere nasıl yol gösterir?', category: 'teknoloji' },
+  { topic: 'Neden kediler kutulara girer?', category: 'ilginç bilgiler' },
+  { topic: 'Atlantik Okyanusu neden genişliyor?', category: 'bilim' },
+  { topic: 'Neden limon suyu yaraya acıtır?', category: 'ilginç bilgiler' },
+  { topic: 'Para nasıl icat edildi?', category: 'tarih' },
+  { topic: 'Neden bazı geceler yıldızlar daha parlak?', category: 'gizem' }
+];
+
 const CATEGORIES = [
   'teknoloji',
   'tarih',
@@ -77,9 +107,44 @@ export class TrendAgent {
     return items;
   }
 
+  normalize(topic) {
+    return String(topic || '')
+      .toLocaleLowerCase('tr')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  isUsed(topic, usedTopics) {
+    const target = this.normalize(topic);
+    if (!target) return true;
+    return usedTopics.some((used) => {
+      const other = this.normalize(used);
+      if (!other) return false;
+      return other === target || other.includes(target) || target.includes(other);
+    });
+  }
+
+  /** Her durumda çalışan yedek: geçmişte işlenmemiş ilginç konu seçer. */
+  pickEvergreen(usedTopics, recentCategories = []) {
+    const fresh = EVERGREEN_TOPICS.filter((item) => !this.isUsed(item.topic, usedTopics));
+    const pool = fresh.length ? fresh : EVERGREEN_TOPICS;
+    const notRecent = pool.filter((item) => !recentCategories.includes(item.category));
+    const choices = notRecent.length ? notRecent : pool;
+    const picked = choices[Math.floor(Math.random() * choices.length)];
+    return {
+      topic: picked.topic,
+      category: picked.category,
+      popularityScore: 70,
+      reason: 'Yedek konu listesinden seçildi (tekrar etmeyen ilginç bilgi).',
+      source: 'evergreen'
+    };
+  }
+
   async pickDailyTopic() {
     const candidates = await this.fetchCandidates();
     const usedTopics = await storage.getUsedTopics();
+    const recentCategories = await storage.getRecentCategories(6);
 
     const candidateList = candidates
       .map((item, idx) => {
@@ -89,16 +154,23 @@ export class TrendAgent {
 
     const usedList = usedTopics.slice(-60).join(', ') || 'Yok';
 
-    const prompt = [
+    const buildPrompt = (strict) => [
       `Kategorilerimiz: ${CATEGORIES.join(', ')}`,
       '',
       'Güncel aday başlıklar (bunlardan seçebilir veya bu kategorilerden çok ilgi çekici özgün bir konu belirleyebilirsin):',
-      candidateList,
+      candidateList || '(kaynak bulunamadı)',
       '',
-      'DAHA ÖNCE İŞLENEN KONULAR (BUNLARI KESİNLİKLE TEKRAR SEÇME):',
+      'DAHA ÖNCE İŞLENEN KONULAR (BUNLARI KESİNLİKLE TEKRAR SEÇME, benzerini de seçme):',
       usedList,
       '',
-      'YouTube Shorts\'ta izlenme potansiyeli en yüksek TEK bir konu seç ve popülerlik puanı ver.',
+      `SON KULLANILAN KATEGORİLER (mümkünse farklı bir kategori seç): ${recentCategories.join(', ') || 'Yok'}`,
+      '',
+      'Kurallar:',
+      '- Konu beyaz tahtaya keçeli kalemle somut nesneler çizilerek anlatılabilir olmalı.',
+      '- Az bilinen, şaşırtıcı bir bilgi içermeli; "neden/nasıl" sorusuna cevap vermeli.',
+      '- 45-50 saniyelik videoya sığacak tek bir odak konusu seç.',
+      strict ? '- Önceki cevabın tekrar/benzer çıktı; TAMAMEN farklı bir konu seç.' : '',
+      '',
       'Sadece şu JSON formatında yanıt ver:',
       '{',
       '  "topic": "Seçilen konu başlığı",',
@@ -106,18 +178,44 @@ export class TrendAgent {
       '  "popularityScore": 1-100 arası sayı,',
       '  "reason": "Seçim nedeni"',
       '}'
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
-    const result = await askOllama({
-      system: 'Sen viral YouTube Shorts içerik araştırmacısısın. Sadece JSON döndür.',
-      prompt,
-      json: true,
-      temperature: 0.8
-    });
+    const system = 'Sen viral YouTube Shorts içerik araştırmacısısın. Sadece JSON döndür.';
+
+    let result = null;
+    for (const strict of [false, true]) {
+      try {
+        const candidate = await askOllama({
+          system,
+          prompt: buildPrompt(strict),
+          json: true,
+          temperature: strict ? 1.0 : 0.85
+        });
+        if (!candidate?.topic) continue;
+        if (this.isUsed(candidate.topic, usedTopics)) {
+          log('TrendAgent', `Tekrar eden konu reddedildi: "${candidate.topic}"`, 'WARN');
+          continue;
+        }
+        result = candidate;
+        break;
+      } catch (err) {
+        log('TrendAgent', `Ollama konu seçemedi: ${err.message}`, 'WARN');
+        break;
+      }
+    }
+
+    if (!result) {
+      result = this.pickEvergreen(usedTopics, recentCategories);
+      log('TrendAgent', 'Yedek konu listesi kullanıldı.', 'WARN');
+    }
+
+    result.source = result.source || 'ollama';
+    await storage.reserveTopic(result.topic, result.category);
 
     log(
       'TrendAgent',
-      `Konu seçildi: "${result.topic}" [${result.category}] Puan: ${result.popularityScore}`
+      `Konu seçildi: "${result.topic}" [${result.category}] ` +
+      `Puan: ${result.popularityScore} (${result.source})`
     );
 
     return result;

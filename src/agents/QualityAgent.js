@@ -34,8 +34,10 @@ export class QualityAgent {
     if (!aStream) {
       errors.push('Videoda ses kanalı yok.');
     }
-    if (vDuration < 20 || vDuration > 62) {
-      errors.push(`Süre Shorts sınırında değil: ${vDuration.toFixed(1)}s`);
+    if (vDuration < 35 || vDuration > 62) {
+      errors.push(`Süre hedefin dışında: ${vDuration.toFixed(1)}s (beklenen 45-50s, tolerans 35-62s)`);
+    } else if (vDuration < 42 || vDuration > 53) {
+      log('QualityAgent', `Süre hedefin biraz dışında: ${vDuration.toFixed(1)}s (hedef 45-50s)`, 'WARN');
     }
     if (Math.abs(vDuration - expectedAudioDuration) > 1.5 || Math.abs(vDuration - aDuration) > 1.5) {
       errors.push(`Ses-görüntü senkron farkı çok yüksek (Video: ${vDuration.toFixed(1)}s, Ses: ${aDuration.toFixed(1)}s).`);

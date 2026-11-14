@@ -6,7 +6,8 @@
     "start": "node src/index.js",
     "run-now": "node src/index.js --run-now",
     "youtube-auth": "node src/scripts/youtubeAuth.js",
-    "whiteboard-demo": "node src/scripts/whiteboardDemo.js"
+    "whiteboard-demo": "node src/scripts/whiteboardDemo.js",
+    "auto-video": "node src/scripts/autoVideo.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

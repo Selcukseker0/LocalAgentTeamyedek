@@ -18,8 +18,9 @@ Değerlendirme kriterleri:
 2. Cümleler anlaşılır Türkçe ve kısa mı? (en fazla 12 kelime)
 3. Devrik cümle var mı?
 4. Anlaşılmaz/uydurma kelime veya şüpheli bilgi var mı? Varsa onaylama ve bunları düzelt.
-5. Toplam 45-65 kelime mi?
+5. Toplam 127-149 kelime (45-50 saniye) mi?
 6. Yapay/AI vibes veriyor mu?
+7. sceneHints cümle sayısıyla aynı sayıda ve çizilebilir somut nesneler mi?
 
 Sadece şu JSON formatında dön:
 {"approved": true veya false, "score": 1-10, "feedback": "Ne düzeltilecek — somut ve kısa"}`

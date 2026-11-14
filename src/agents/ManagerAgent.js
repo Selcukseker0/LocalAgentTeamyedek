@@ -65,6 +65,7 @@ export class ManagerAgent {
           audioPath,
           srtPath,
           narration: scriptObj.narration,
+          sceneHints: scriptObj.sceneHints,
           workDir
         });
 
