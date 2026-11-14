@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import { log } from '../logger.js';
+import { probeMedia, resolveBinaries } from '../utils/ffmpeg.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,10 +22,7 @@ export class QualityAgent {
     }
 
     // 2. Çözünürlük, ses akışı, süre ve ses-görüntü senkron kontrolü
-    const { stdout } = await execFileAsync('ffprobe', [
-      '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', videoPath
-    ]);
-    const info = JSON.parse(stdout);
+    const info = await probeMedia(videoPath);
     const vStream = info.streams?.find(s => s.codec_type === 'video');
     const aStream = info.streams?.find(s => s.codec_type === 'audio');
     const vDuration = parseFloat(vStream?.duration || info.format?.duration || '0');
@@ -43,8 +41,10 @@ export class QualityAgent {
       errors.push(`Ses-görüntü senkron farkı çok yüksek (Video: ${vDuration.toFixed(1)}s, Ses: ${aDuration.toFixed(1)}s).`);
     }
 
+    const { ffmpeg } = await resolveBinaries();
+
     // 3. Siyah ekran kontrolü
-    const { stderr: blackErr } = await execFileAsync('ffmpeg', [
+    const { stderr: blackErr } = await execFileAsync(ffmpeg, [
       '-i', videoPath, '-vf', 'blackdetect=d=1.5:pix_th=0.10', '-an', '-f', 'null', '-'
     ]).catch(err => ({ stderr: err.stderr || '' }));
 
@@ -53,7 +53,7 @@ export class QualityAgent {
     }
 
     // 4. Sessiz ses kontrolü (mean_volume -60dB altındaysa ses boştur)
-    const { stderr: volErr } = await execFileAsync('ffmpeg', [
+    const { stderr: volErr } = await execFileAsync(ffmpeg, [
       '-i', videoPath, '-af', 'volumedetect', '-vn', '-f', 'null', '-'
     ]).catch(err => ({ stderr: err.stderr || '' }));
 

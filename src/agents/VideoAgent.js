@@ -1,3 +1,8 @@
+/**
+ * @deprecated Stok klip (Pixabay) tabanlı eski montaj ajanı.
+ * Günlük akış artık `WhiteboardVideoAgent` (beyaz tahta / keçeli kalem)
+ * kullanıyor. Bu dosya yalnızca geriye dönük uyumluluk için duruyor.
+ */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
