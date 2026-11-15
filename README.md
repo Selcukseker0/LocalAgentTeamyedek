@@ -13,8 +13,12 @@ Ollama üzerinde yerel çalışan, TypeScript ile yazılmış deneysel çoklu aj
 
 ```bash
 npm install
+npm run env:init     # .env dosyasını .env.example'dan oluşturur (varsa üzerine yazmaz)
 ollama pull qwen2.5:7b
 ```
+
+`.env` depoya **dahil değildir** (`.gitignore` içinde); her klonda bir kez
+`npm run env:init` ile oluşturulur. Boş bırakılan alanların listesini de yazar.
 
 Ollama uygulamasının/servisinin çalıştığından emin olun.
 

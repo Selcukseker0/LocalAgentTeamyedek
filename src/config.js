@@ -7,7 +7,10 @@ try {
   const dotenv = await import('dotenv');
   (dotenv.default ?? dotenv).config();
 } catch {
-  console.warn('[config] dotenv bulunamadı, .env yüklenmedi. `npm install` çalıştırın.');
+  console.warn(
+    '[config] dotenv bulunamadı, .env yüklenmedi. Önce `npm install`, ' +
+    'sonra `npm run env:init` ile .env dosyasını oluşturun.'
+  );
 }
 
 export const config = {

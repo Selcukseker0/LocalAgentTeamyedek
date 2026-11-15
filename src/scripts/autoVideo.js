@@ -65,6 +65,14 @@ async function main() {
   const started = Date.now();
   const ts = stamp();
 
+  const envExists = await fs.stat(path.join(process.cwd(), '.env')).then(() => true).catch(() => false);
+  if (!envExists) {
+    console.log(
+      'ℹ️  .env bulunamadı — varsayılan ayarlarla devam ediliyor.\n' +
+      '   Oluşturmak için: npm run env:init\n'
+    );
+  }
+
   const trend = new TrendAgent();
   const scriptAgent = new ScriptAgent();
   const reviewer = new ReviewerAgent();
