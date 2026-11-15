@@ -8,7 +8,8 @@
     "youtube-auth": "node src/scripts/youtubeAuth.js",
     "whiteboard-demo": "node src/scripts/whiteboardDemo.js",
     "auto-video": "node src/scripts/autoVideo.js",
-    "env:init": "node src/scripts/initEnv.js"
+    "env:init": "node src/scripts/initEnv.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

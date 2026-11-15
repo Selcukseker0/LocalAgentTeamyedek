@@ -1,6 +1,8 @@
 # LocalAgentTeam
 
-Ollama üzerinde yerel çalışan, TypeScript ile yazılmış deneysel çoklu ajan yazılım ekibi.
+Ollama üzerinde yerel çalışan, **Node.js (ESM) + Python (Pillow)** ile yazılmış deneysel
+çoklu ajan yazılım ekibi. Türkçe dikey Shorts üretir: trend konusu → araştırma →
+çizilebilir senaryo → seslendirme → beyaz tahta animasyonu.
 
 ## Gereksinimler
 
@@ -26,7 +28,7 @@ Ollama uygulamasının/servisinin çalıştığından emin olun.
 
 ```bash
 npm start          # Telegram botu + otomatik zamanlanmış üretim
-npm run auto-video # tek seferlik: trend konusu -> senaryo -> ses -> 45-50 sn Short
+npm run auto-video # tek seferlik: konu -> araştırma -> senaryo -> ses -> 30-45 sn Short
 ```
 
 ### Her çalıştırmada yeni konu, 45-50 saniyelik Short
@@ -65,25 +67,30 @@ Senaryo, modele "cümle dizisi" olarak yazdırılır:
 
 ```json
 {"scenes":[
-  {"narration":"Seslendirilecek tam cümle.","visual_prompt":"buz küpünün üstünden su damlıyor","title":"3 KAT"},
+  {"narration":"Seslendirilecek tam cümle.",
+   "visual_objects":["buz küpü","su damlası"],
+   "image_prompt":"buz küpünün üstünden su damlıyor",
+   "title":"3 KAT"},
   ...
 ]}
 ```
 
-12-18 sahne, her cümle 6-20 kelime (hedef 8-14). Toplam süre 45-60 saniye
-(~131-171 kelime). Model kısa yazarsa 3 tura kadar ek sahne istenir; 115
-kelimenin altında kalırsa açık hata verilir (bozuk video üretilmez).
+12-18 sahne, her cümle **6-16 kelime** (hedef 8-14). Toplam süre **30-45 saniye**
+(87-128 kelime). Model kısa yazarsa 3 tura kadar ek sahne istenir; 75 kelimenin
+altında kalırsa açık hata verilir (bozuk video üretilmez).
 
 **Render'dan önce otomatik kontrol** (`validateScript`): her sahnede
 
 - `narration` iki nokta, numara (`1)`, `3):`) veya etiket kelimesi
   (kanca/hook/sebep/kapanış) içermiyorsa,
 - yarım kalmamışsa (`…`, virgül/bağlaç sonu) ve noktalaması varsa,
-- kelime sayısı 5-20 aralığındaysa,
+- kelime sayısı 6-16 aralığındaysa,
 - aynı cümle iki kez geçmiyorsa (kelime örtüşmesi %70'in altında),
+- **soyut kelime** yoksa (`gizemli`, `ilginç`, `şaşırtıcı`… — çekim ekleriyle birlikte),
+- cümledeki **sayı kaynak bilgilerde** geçiyorsa (uydurma sayı reddedilir),
 
 senaryo kabul edilir. Aksi hâlde sorunlar modele geri verilip yeniden yazdırılır
-(2 deneme). Hâlâ bozuksa: sahne sayısı 8'in, kelime 115'in altındaysa üretim
+(2 deneme). Hâlâ bozuksa: sahne sayısı 8'in, kelime 75'in altındaysa üretim
 açık hatayla durur; üstündeyse temizlenmiş hâliyle devam edilir.
 
 ### Senaryoyu hangi model yazıyor?
@@ -108,10 +115,11 @@ Senaryo kurgusu kısa video şablonuna göre istenir: **kanca (1-2 cümle) →
 soru → sebep 1 → sebep 2 → kapanış sorusu**. Her cümle için ayrıca iki alan
 gelir:
 
-- `visual`: beyaz tahtaya çizilecek sahnenin 3-8 kelimelik tarifi
-  (ör. "iki dil arasında köprü", "buz küpü eriyor"). Sahne seçiminde en
-  belirleyici sinyal budur; tek kelime eşleşmesi değil, cümlenin **ne
-  anlattığı** kullanılır.
+- `visual_objects`: cümlede geçen 2-4 somut nesne (`["buz küpü","su damlası"]`).
+  Görsel üretiminde modele "bunları göster" diye verilir, vision doğrulamasında
+  da eksik nesne listesiyle karşılaştırılır.
+- `image_prompt`: sahnenin 6-16 kelimelik tarifi (ör. "buz küpünün üstünden su
+  damlıyor"). Görsel üretimi kapalıysa yedek kompozisyon planlayıcısına ipucu olur.
 - `title`: tahtanın üstüne el yazısıyla yazılacak 1-2 kelimelik vurgu.
   Modelin uydurduğu etiketler kabul edilmez: `title` sadece cümlenin içinde
   geçiyorsa kullanılır. Aksi hâlde etiket cümledeki **sayıdan** (`%40`,
@@ -125,8 +133,8 @@ kelime** okuyor. Farklı ses/hız kullanırsanız `.env` içinde
 ```bash
 # Konuyu kendiniz seçmek isterseniz:
 node src/scripts/autoVideo.js --topic "Buz neden kaygandır?"
-# İnceleme adımını atlamak için:
-node src/scripts/autoVideo.js --no-review
+# Ek LLM inceleme turunu açmak için (yavaş):
+node src/scripts/autoVideo.js --review
 ```
 
 Çıktı: `output/auto/<zaman damgası>-<konu>/shorts_whiteboard_<zaman damgası>.mp4`,
@@ -204,8 +212,9 @@ Akış:
    zamanlarından çıkarır (yoksa altyazı ipuçları, en son tahmini süre).
 1b. `IMAGE_PROVIDER` açıksa `ImageAgent` her cümle için illüstrasyon üretir;
    üretilemeyen sahneler aşağıdaki kompozisyon yoluna düşer.
-2. Her cümle için **1-3 nesnelik çizim kompozisyonu** planlanır: model cümleyi
-   ve `visual_prompt`'u okur, katalogdan nesneleri seçip sayfaya yerleştirir
+2. (Görsel üretimi kapalıysa) her cümle için **1-3 nesnelik çizim kompozisyonu**
+   planlanır: model cümleyi ve `image_prompt`'u okur, katalogdan nesneleri
+   seçip sayfaya yerleştirir
    (`{"type":"ice","x":0.42,"y":0.58,"size":0.45}`). Model yoksa anahtar
    kelimeden tek nesne üretilir; **boş sayfa bırakılmaz**, arka arkaya aynı
    kompozisyon gelmez.
@@ -232,7 +241,7 @@ değişkenini kullanın.
 
 ### Tek başına deneme
 
-> `whiteboard-demo` hızlı bir görsel kontroldür: her çalıştırmada 45-50
+> `whiteboard-demo` hızlı bir görsel kontroldür: her çalıştırmada 30-45
 > saniyelik örnek metinlerden birini **rastgele** seçer. Gerçek akış (trend
 > konusu + kendi senaryosu) için `npm run auto-video` kullanın.
 
@@ -292,7 +301,11 @@ $env:PYTHON_BIN = "py"
 Font otomatik aranır; Windows'ta `C:\Windows\Fonts\arialbd.ttf` kullanılır.
 Farklı bir yazı tipi için `WHITEBOARD_FONT` değişkenine `.ttf` yolunu yazın.
 
-### Sahne kütüphanesi
+### Sahne kütüphanesi (yedek yol)
+
+> Varsayılan yol artık **sahne başına üretilen illüstrasyon**. Bu kütüphane,
+> `IMAGE_PROVIDER` boşken veya görsel üretilemediğinde devreye girer; 57 hazır
+> doodle'dan oluşur ve rastgele görünebilir (bkz. `docs/cizim-mantigi.md`).
 
 Sahneler `src/whiteboard/scenes.py` içinde vektör çizim darbeleri olarak
 tanımlıdır:
@@ -319,7 +332,7 @@ aynı görsel aileden (doğa, günlük hayat, bilim...) anlamca en yakın sahne
 seçilir. Hiçbir sahneye uymayan cümlelerde videonun "konu sahnesi" (ör. kahve
 anlatımında kahve fincanı) kullanılır; rastgele çizim yapılmaz.
 
-Sahne seçim sırası: Ollama planı → cümlenin `visual` tarifi → anahtar kelimeler →
+Sahne seçim sırası: Ollama planı → cümlenin `image_prompt` tarifi → anahtar kelimeler →
 konu sahnesi → ailesi. Ollama'nın döndürdüğü Türkçe cevaplar ("vazo", "bal
 küpü") otomatik olarak katalog kimliğine çevrilir ve kısmi planlar da kabul
 edilir. Hangi cümlenin hangi sahneyi hangi kaynakla aldığı `run_info.json`
@@ -328,8 +341,7 @@ içindeki `scene_plan` alanında görülür.
 Yeni nesne eklemek için `src/whiteboard/scenes.py` içinde `scene_<isim>()`
 fonksiyonu yazıp `SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar
 kelimeleri, `WhiteboardVideoAgent.js` içindeki `SCENE_HINTS` sözlüğüne Türkçe
-açıklamayı ekleyin (model bu açıklamadan seçer). İsteğe bağlı olarak `src/agents/WhiteboardVideoAgent.js` içindeki
-`SCENE_HINTS` sözlüğüne Türkçe açıklama ekleyin (Ollama'nın seçmesi için).
+açıklamayı ekleyin (model bu açıklamadan seçer).
 
 ### El görseli
 
@@ -349,7 +361,7 @@ tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 
 ## Hız
 
-45 saniyelik bir videonun tipik süreleri (4 çekirdek CPU, GPU yok):
+30-45 saniyelik bir videonun tipik süreleri (4 çekirdek CPU, GPU yok):
 
 | Adım | Süre |
 | --- | --- |
@@ -357,6 +369,8 @@ tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 | Senaryo (Ollama, 3-4 istek) | 90-180 sn |
 | Seslendirme (edge-tts) | 5-10 sn |
 | Kare çizimi + kodlama | 60-120 sn |
+| Görsel üretimi (Imagen, 14 sahne) | 90-240 sn |
+| Vision doğrulama (+onarımlar) | 30-90 sn |
 
 Hız için:
 
@@ -390,10 +404,11 @@ sessiz video üretmez. Sık nedenler: `edge_tts` yanlış Python'a kurulu
 
 ### Araştırma (konu doğrulama)
 
-`ResearchAgent` konu hakkında Türkçe Wikipedia özetini çeker ve senaryo
-planına "doğrulanmış bilgi" olarak verir; böylece cümleler uydurma yerine
-gerçek bilgiye dayanır. Ağ yoksa veya madde bulunamazsa uyarı yazıp normal
-üretime devam eder (`Araştırma yapılamadı ...`).
+`ResearchAgent` Wikipedia **TR + EN** maddelerini çeker, düz metni modele verip
+6-8 somut olgu çıkarır. Kaynak metinle örtüşmeyen olgu (uydurma) atılır; senaryo
+bu olgulara bağlı kalır ve cümlelerdeki sayılar kaynakla karşılaştırılır.
+Ağ yoksa veya madde bulunamazsa uyarı yazıp normal üretime devam eder
+(`Araştırma yapılamadı ...`). `RESEARCH_ENABLED=0` ile kapatılır.
 
 ## Kontroller
 
@@ -405,7 +420,7 @@ node --check src/scripts/autoVideo.js
 npm run whiteboard-demo                           # uçtan uca duman testi (sessiz video)
 ```
 
-`npm run whiteboard-demo` ~45 saniyelik sessiz bir video üretir; süre, sahne
+`npm run whiteboard-demo` 30-45 saniyelik sessiz bir video üretir; süre, sahne
 zinciri ve çıktı dosyası konsolda raporlanır. `run_info.json` içindeki
 `duration` değeri beklenen aralıkta mı diye bakın.
 
@@ -418,10 +433,9 @@ zinciri ve çıktı dosyası konsolda raporlanır. `run_info.json` içindeki
 
 Proje `.env` dosyasını otomatik yükler. Senaryo, senaryo inceleme, trend seçimi ve hata analizi yerel Ollama modeliyle çalışır; bu akışlarda Gemini API anahtarı kullanılmaz.
 
-## Mevcut doğrulama sınırı
+## Hata analizi
 
-Manager; Developer çıktısında tam olarak bir TypeScript kod bloğu arar, bu kodu geçici bir dosyada TypeScript derleyicisiyle kontrol eder ve Reviewer değerlendirmesini bekler. Üretilen kodu otomatik çalıştırmaz. Derleme kontrolü, kodun çalışma zamanı davranışının doğru olduğunu tek başına kanıtlamaz.
-
-## Güvenlik notu
-
-Model çıktısı güvenilir kod kabul edilmemelidir. Bu sürüm üretilen kodu otomatik çalıştırmaz. İleride çalışma zamanı testi eklenecekse ayrı ve kısıtlı bir sandbox kullanılmalıdır.
+Bot akışında (`npm start`) video üretimi 3 denemede başarısız olursa
+`DeveloperAgent` hatayı yerel modele yorumlatır ve Telegram bildirimine kısa bir
+çözüm notu ekler. Kod üretmez, kod çalıştırmaz, dosya değiştirmez — yalnızca
+açıklama metni döner.

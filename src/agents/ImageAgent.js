@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../logger.js';
+import { similarity } from '../utils/text.js';
 
 // Hedef videodaki stil: beyaz kâğıt üzerine keçeli kalem çizimi, sade dolgu.
 // "no text" kritik: görsel modeller Türkçe yazıyı bozuk üretiyor.
@@ -35,23 +36,6 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function words(text) {
-  return String(text || '')
-    .toLocaleLowerCase('tr')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter((word) => word.length > 2);
-}
-
-function similarity(a, b) {
-  const setA = new Set(words(a));
-  const setB = new Set(words(b));
-  if (!setA.size || !setB.size) return 0;
-  let common = 0;
-  for (const token of setA) if (setB.has(token)) common += 1;
-  return common / new Set([...setA, ...setB]).size;
 }
 
 /**

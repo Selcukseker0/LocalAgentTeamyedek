@@ -21,7 +21,6 @@ export const config = {
   telegramMinute: Number(process.env.TELEGRAM_MINUTE ?? 55),
   publishHour: Number(process.env.PUBLISH_HOUR ?? 20),
   publishMinute: Number(process.env.PUBLISH_MINUTE ?? 0),
-  pixabayApiKey: process.env.PIXABAY_API_KEY || '',
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   youtube: {
@@ -32,7 +31,9 @@ export const config = {
     tokenPath: path.resolve('data/youtube_token.json')
   },
   ttsVoice: process.env.TTS_VOICE || 'tr-TR-AhmetNeural',
-    pythonBin: process.env.PYTHON_BIN || 'python',
+  // edge-tts hızı: +20% Türkçe için doğal, 30-45 sn hedefi buna göre
+  ttsRate: process.env.TTS_RATE || '+20%',
+  pythonBin: process.env.PYTHON_BIN || 'python',
   paths: {
     dataDir: path.resolve('data'),
     outputDir: path.resolve('output'),

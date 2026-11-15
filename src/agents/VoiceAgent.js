@@ -59,7 +59,7 @@ export class VoiceAgent {
       await execFileAsync(config.pythonBin, [
         '-m', 'edge_tts',
         '--voice', config.ttsVoice,
-        '--rate=+20%',
+        '--rate', config.ttsRate,
         '--text', cleanText,
         '--write-media', audioPath,
         '--write-subtitles', vttPath
@@ -95,7 +95,7 @@ export class VoiceAgent {
         TIMING_SCRIPT,
         '--text-file', path.join(path.dirname(audioPath), 'narration.txt'),
         '--voice', config.ttsVoice,
-        '--rate=+20%',
+        '--rate', config.ttsRate,
         '--media', audioPath,
         '--words', wordsPath,
         '--srt', srtPath

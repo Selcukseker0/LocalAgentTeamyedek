@@ -5,6 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { log } from '../logger.js';
+import { countWords, splitSentences } from '../utils/text.js';
+
+export { splitSentences };
 import { askLLM } from '../llm/provider.js';
 import { ImageAgent } from './ImageAgent.js';
 import { VisionAgent } from './VisionAgent.js';
@@ -90,22 +93,11 @@ function log2(message, level = 'INFO') {
   log('WhiteboardVideoAgent', message, level);
 }
 
-function countWords(text) {
-  return (text || '').split(/\s+/).filter(Boolean).length;
-}
+
 
 // ---------------------------------------------------------------- yardımcılar
 
-export function splitSentences(text) {
-  const clean = (text || '').replace(/\s+/g, ' ').trim();
-  if (!clean) return [];
-  // Türkçe kısaltmalar (vb., vs., Dr.) cümle sonu sayılmasın
-  const protectedText = clean.replace(/\b(vb|vs|Dr|Prof|No|ör)\./gi, (m) => m.replace('.', '\u0001'));
-  return protectedText
-    .split(/(?<=[.!?…])\s+/)
-    .map((s) => s.replace(/\u0001/g, '.').trim())
-    .filter(Boolean);
-}
+
 
 export function parseSrt(srt) {
   return srt
@@ -262,124 +254,6 @@ export class WhiteboardVideoAgent {
     return SCENE_IDS;
   }
 
-  /** Ollama ile her cümleye beyaz tahta sahnesi atar (başarısızsa anahtar kelime). */
-  /**
-   * Cümle → sahne zincirini kurar.
-   * Sıra: Ollama planı → cümle ipucu → metin anahtar kelimeleri → konu sahnesi → dolgu.
-   * @returns {{sceneIds: string[], sceneSources: string[]}}
-   */
-  async planSceneChain(timeline, { hints = null, topic = '', scenes = null } = {}) {
-    if (Array.isArray(scenes) && scenes.length) {
-      const sceneIds = timeline.map((_item, i) => scenes[i % scenes.length]);
-      return { sceneIds, sceneSources: sceneIds.map(() => 'elle') };
-    }
-
-    const available = await this.listScenes();
-    const hintList = Array.isArray(hints) && hints.length === timeline.length ? hints : null;
-    const planned = await this.planScenes(timeline, available, hintList);
-    const anchor = this.pickAnchor(
-      timeline.map((item, i) => `${hintList ? hintList[i] : ''} ${item.text}`),
-      topic
-    );
-
-    const sceneIds = [];
-    const sceneSources = [];
-    const usage = new Map();
-    const useCount = (candidate) => usage.get(candidate) || 0;
-
-    for (let i = 0; i < timeline.length; i++) {
-      const previous = sceneIds[i - 1] || null;
-      let id = planned[i];
-      let source = id ? 'ollama' : null;
-
-      const hintRanked = this.scoreScenes(hintList ? hintList[i] : timeline[i].text);
-      const textRanked = hintList && hintList[i] !== timeline[i].text
-        ? this.scoreScenes(timeline[i].text)
-        : [];
-      const ranked = [...new Set([...hintRanked, ...textRanked])];
-
-      if (id && useCount(id) >= 2) {
-        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
-        if (alternative) {
-          id = alternative;
-          source = 'anahtar kelime';
-        } else {
-          id = this.relatedScene(id, usage, previous) || id;
-          source = 'ilgili sahne';
-        }
-      }
-
-      if (!id) {
-        const fresh = ranked.find((candidate) => candidate !== previous && useCount(candidate) < 2) ||
-          ranked.find((candidate) => useCount(candidate) < 2);
-
-        if (fresh) {
-          id = fresh;
-          source = 'anahtar kelime';
-        } else if (ranked.length) {
-          id = this.relatedScene(ranked[0], usage, previous) || ranked[0];
-          source = 'ilgili sahne';
-        } else if (anchor && useCount(anchor) < 2) {
-          // Konu sahnesi üst üste gelmesin: mümkünse ailesinden devam
-          const alternative = anchor === previous
-            ? this.relatedScene(anchor, usage, previous)
-            : null;
-          id = alternative || anchor;
-          source = alternative ? 'konu ailesi' : 'konu';
-        } else if (anchor) {
-          id = this.relatedScene(anchor, usage, previous) || anchor;
-          source = 'konu ailesi';
-        } else {
-          id = useCount('question') < 2 ? 'question' : 'book';
-          source = 'dolgu';
-        }
-      }
-
-      // Aynı sahne arka arkaya gelmesin (izleyici "tekrar" olarak görüyor)
-      if (id && id === previous) {
-        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
-        if (alternative) {
-          id = alternative;
-          source = 'çeşitlendirme';
-        } else {
-          const related = this.relatedScene(id, usage, previous);
-          if (related && related !== id) {
-            id = related;
-            source = 'ilgili sahne';
-          }
-        }
-      }
-
-      usage.set(id, useCount(id) + 1);
-      sceneIds.push(id);
-      sceneSources.push(source);
-    }
-
-    const fromModel = sceneSources.filter((item) => item === 'ollama').length;
-    log2(
-      `Sahne kaynağı: ${fromModel}/${timeline.length} Ollama, ` +
-      `${timeline.length - fromModel} yedek eşleme` +
-      (anchor ? ` (konu sahnesi: ${anchor})` : '')
-    );
-
-    return { sceneIds, sceneSources };
-  }
-
-  /** Modelin döndürdüğü serbest metni katalogdaki sahne kimliğine çevirir. */
-  normalizeSceneId(value, available) {
-    if (value === null || value === undefined) return null;
-    const raw = String(value).trim().toLocaleLowerCase('tr');
-    if (!raw) return null;
-    if (available.includes(raw)) return raw;
-
-    const snake = raw.replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
-    if (available.includes(snake)) return snake;
-
-    // "vazo", "bal küpü", "ampul" gibi Türkçe cevaplar → anahtar kelime eşlemesi
-    const ranked = this.scoreScenes(raw).filter((id) => available.includes(id));
-    return ranked[0] || null;
-  }
-
   /** Videoda tekrar eden "konu sahnesi": eşleşmeyen cümlelerde bu kullanılır. */
   pickAnchor(texts, topicText = '') {
     const counts = new Map();
@@ -395,57 +269,6 @@ export class WhiteboardVideoAgent {
 
     const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
     return best ? best[0] : null;
-  }
-
-  async planScenes(timeline, availableScenes = SCENE_IDS, hints = null) {
-    if (timeline.length === 0) return [];
-    const catalog = availableScenes
-      .map((id) => `- ${id}: ${SCENE_HINTS[id] || 'serbest çizim'}`)
-      .join('\n');
-
-    const hintBlock = Array.isArray(hints)
-      ? `\nYazarın her cümle için verdiği görsel tarif (cümlenin ne anlattığını gösterir,\n` +
-        `sahne seçiminde cümleden daha belirleyicidir; karşılığı olan katalog sahnesini seç):\n${hints
-          .map((hint, i) => `${i + 1}. ${hint || '(tarif yok)'}`)
-          .join('\n')}\n`
-      : '';
-
-    try {
-      const result = await askLLM({
-        system: 'Sen bir çizim yönetmenisin. Yalnızca istenen JSON nesnesini döndür.',
-        prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
-Her cümle için katalogdan EN UYGUN sahneyi seç. Sahne kimliğini katalogdaki gibi yaz.
-Cümle sırasını koru, sahne sayısı cümle sayısına eşit olsun.
-Her cümlede anlatılan OLAYI/nesneyi düşün; yalnızca tek bir kelimeye bakıp sahne seçme.
-Cümlede geçen bir kelime katalogda varsa ama cümlenin konusu başkaysa, konuya uyan sahneyi seç.
-Katalog:\n${catalog}
-${hintBlock}
-Cümleler:
-${timeline.map((item, i) => `${i + 1}. ${item.text}`).join('\n')}
-
-Yalnızca şu JSON biçimini döndür:
-{"scenes":[{"index":1,"scene":"<katalogdaki kimlik>"}, ...]}`,
-        json: true,
-        temperature: 0.1,
-        numPredict: 700
-      });
-
-      const planned = Array.isArray(result?.scenes) ? result.scenes : [];
-      const byIndex = new Map();
-      for (const item of planned) {
-        const index = Number(item?.index ?? item?.i ?? item?.sentence);
-        const id = this.normalizeSceneId(item?.scene ?? item?.id, availableScenes);
-        if (Number.isFinite(index) && id) byIndex.set(index, id);
-      }
-
-      if (byIndex.size > 0) {
-        // Kısmi plan da işe yarar; eksikler yedek eşleme ile tamamlanır
-        return timeline.map((_item, i) => byIndex.get(i + 1) || null);
-      }
-    } catch (err) {
-      log2(`Ollama sahne planı alınamadı: ${err.message}`, 'WARN');
-    }
-    return timeline.map(() => null);
   }
 
   /** Konu bir sahneyi doyurduğunda aynı görsel aileden devam edilir. */

@@ -3,12 +3,8 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../logger.js';
 import { storage } from '../storage.js';
+import { generateShort } from '../pipeline/shortPipeline.js';
 import { DeveloperAgent } from './DeveloperAgent.js';
-import { ReviewerAgent } from './ReviewerAgent.js';
-import { TrendAgent } from './TrendAgent.js';
-import { ScriptAgent } from './ScriptAgent.js';
-import { VoiceAgent } from './VoiceAgent.js';
-import { WhiteboardVideoAgent } from './WhiteboardVideoAgent.js';
 import { QualityAgent } from './QualityAgent.js';
 import { TelegramAgent } from './TelegramAgent.js';
 import { YouTubeAgent } from './YouTubeAgent.js';
@@ -16,11 +12,6 @@ import { YouTubeAgent } from './YouTubeAgent.js';
 export class ManagerAgent {
   constructor() {
     this.developer = new DeveloperAgent();
-    this.reviewer = new ReviewerAgent();
-    this.trend = new TrendAgent();
-    this.script = new ScriptAgent();
-    this.voice = new VoiceAgent();
-    this.video = new WhiteboardVideoAgent();
     this.quality = new QualityAgent();
     this.telegram = new TelegramAgent();
     this.youtube = new YouTubeAgent();
@@ -45,41 +36,21 @@ export class ManagerAgent {
       try {
         log('ManagerAgent', `Günlük üretim başladı (Deneme ${attempt}/${maxAttempts})`);
 
-        const topicObj = await this.trend.pickDailyTopic();
+        // CLI ile aynı hat: araştırma + çizilebilir senaryo + görsel + vision
+        const run = await generateShort({ workDir });
 
-        let scriptObj = await this.script.generateScript(topicObj);
-        let review = await this.reviewer.reviewScript(scriptObj);
-        if (!review.approved) {
-          log('ManagerAgent', `Reviewer revize istedi: ${review.feedback}`);
-          scriptObj = await this.script.generateScript(topicObj, review.feedback);
-          review = await this.reviewer.reviewScript(scriptObj);
-          if (!review.approved) {
-            throw new Error(`Senaryo revizyondan sonra onaylanmadı: ${review.feedback}`);
-          }
-        }
-
-        const voiceResult = await this.voice.synthesize(scriptObj.narration, workDir);
-        const { audioPath, srtPath } = voiceResult;
-        // Beyaz tahta (keçeli kalem) stili: Pixabay stok klip yerine
-        // Pillow ile çizilen kareler kullanılır.
-        const { videoPath, duration } = await this.video.renderShorts({
-          audioPath,
-          srtPath,
-          narration: scriptObj.narration,
-          sceneHints: scriptObj.sceneHints,
-          sceneLabels: scriptObj.labels,
-          words: voiceResult.words || null,
-          topic: topicObj?.topic || scriptObj.title || '',
-          workDir
-        });
-
-        const qc = await this.quality.inspect(videoPath, srtPath, duration);
+        const qc = await this.quality.inspect(run.video.videoPath, run.voice.srtPath, run.video.duration);
         if (!qc.passed) {
           throw new Error(`Kalite kontrol geçemedi: ${qc.errors.join(', ')}`);
         }
 
-        this.pendingJob = { topicObj, scriptObj, videoPath, workDir };
-        log('ManagerAgent', 'Video hazır! 19:55 Telegram gönderimini bekliyor.');
+        this.pendingJob = {
+          topicObj: run.topicObj,
+          scriptObj: run.script,
+          videoPath: run.video.videoPath,
+          workDir: run.workDir
+        };
+        log('ManagerAgent', 'Video hazır! Telegram gönderimini bekliyor.');
         return this.pendingJob;
       } catch (err) {
         log('ManagerAgent', `Deneme ${attempt} hatası: ${err.message}`, 'ERROR');

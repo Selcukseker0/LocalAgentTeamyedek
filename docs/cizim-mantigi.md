@@ -34,14 +34,14 @@ Yani "AI çizim yapmıyor", **hazır 57 doodle'dan seçip yerleştiriyor**.
 ## 2. Katalog yolu: neye göre çiziyor?
 
 ### a) Nesne seçimi (LLM)
-`src/agents/WhiteboardVideoAgent.js:468` → `planCompositions()`
+`WhiteboardVideoAgent.planCompositions()` (dosya içinde ara)
 
 Modele şu prompt gider (özet):
 
 > "Her cümle için **katalogdan 1-3 nesne** seç ve sayfaya yerleştir. Cümlede anlatılan OLAYI
 > göster… Aynı nesneyi her cümlede tekrarlama… x ve y 0-1 arası, size 0.25-0.6"
 
-Katalog = `SCENE_HINTS` (`WhiteboardVideoAgent.js:26`) — **57 nesne**:
+Katalog = `SCENE_HINTS` (`WhiteboardVideoAgent.js` başı) — **57 nesne**:
 
 `egyptian_vase, honey_pot, milk_bread_honey, water_drop, bacteria_honey, question, clock, sun,
 heart, money, house, book, check, cross, bee, phone, chart, shield, flame, factory, cloud_rain,
@@ -66,7 +66,8 @@ düşüyor: `question`, `eye`, `magnifier`, `clock`, `book`. Bu yüzden çizim c
 ### c) Çeşitlendirme (rastgeleliğin kaynağı)
 - `planCompositions`: art arda aynı nesne kümesi gelirse **ana nesne "ilgili sahne" ile değiştirilir**
   (`relatedScene`), yani anlamdan bağımsız bir ikame.
-- Eski yol (`planScenes`, satır ~278): bir nesne **2 kez** kullanılırsa zorla başkasına atlanır.
+- `planCompositions`: art arda aynı nesne kümesi gelirse `relatedScene` ile ana nesne değiştirilir.
+- (v6'da silinen eski yol — `planScenes` — bir nesne 2 kez kullanılırsa zorla başkasına atlardı.)
 
 Bu iki kural yüzünden bazen cümleyle hiç ilgisi olmayan bir nesne sahneye giriyor.
 
