@@ -37,9 +37,16 @@ seçer; aynı senaryo ikinci kez üretilmez:
    yazılır; sonraki çalıştırmalar bu konuyu (ve benzerini) reddeder. Son
    kategoriler de `usedCategories` içinde tutulur, mümkünse farklı kategori
    seçilir.
-3. `ScriptAgent` 45-50 saniyeye denk gelen **127-149 kelime / 10-15 cümle**
-   senaryo ister, tutmazsa yeniden yazdırır. `ReviewerAgent` aynı ölçütlerle
-   denetler.
+3. `ScriptAgent` senaryoyu **parça parça** üretir (küçük modeller 130 kelimeyi
+   tek yanıtta yazamıyor):
+   1. plan çağrısı → başlık, kanca, üç sebep, kapanış sorusu,
+   2. bölüm 1 → kanca + soru + birinci sebep (7 cümle),
+   3. bölüm 2 → ikinci/üçüncü sebep (6 cümle),
+   4. gerekirse ek cümle çağrısı (hedefe ulaşmak için).
+
+   Toplam 127-149 kelime (45-50 sn). 109 kelimenin altında kalırsa açık hata
+   verilir; üstündeyse uyarı ile devam edilir. `--review` ile ek inceleme
+   yapılabilir.
 4. Ses `edge-tts` ile üretilir, video gerçek ses süresine göre karelenir;
    yani süre tahmini değil, ölçülen ses süresi esastır.
 
@@ -240,7 +247,7 @@ tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 | Adım | Süre |
 | --- | --- |
 | Konu seçimi (Ollama) | 20-45 sn |
-| Senaryo (Ollama, 1-2 istek) | 30-90 sn |
+| Senaryo (Ollama, 3-4 istek) | 90-180 sn |
 | Seslendirme (edge-tts) | 5-10 sn |
 | Kare çizimi + kodlama | 60-120 sn |
 
