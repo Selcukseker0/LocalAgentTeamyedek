@@ -253,6 +253,27 @@ def split_line_and_color(img):
     return line, color
 
 
+# Görsel cila ayarları (env ile kapatılabilir)
+SHARPEN = float(os.environ.get("IMAGE_SHARPEN", "1") or 0)      # 0 = kapalı, 1-2 arası
+LINE_BOOST = int(float(os.environ.get("IMAGE_LINE_BOOST", "1") or 0))  # 0 = kapalı, 1-2
+
+
+def _thicken_line_layer(layer, strength=1):
+    """Kontur katmanının alfasını genişletir (MaxFilter): çizgi kalınlaşır.
+
+    Küçük görsellerde 1 px'lik çizgiler videoda kayboluyordu; bu adım onları
+    marker kalınlığına getirir. Renk katmanına dokunulmaz.
+    """
+    if layer is None:
+        return layer
+    alpha = layer.getchannel("A")
+    for _ in range(max(1, int(strength))):
+        alpha = alpha.filter(ImageFilter.MaxFilter(3))
+    out = layer.copy()
+    out.putalpha(alpha)
+    return out
+
+
 class ImageSceneRenderer:
     """Hazır bir illüstrasyonu maske ile çizip sonra renklerini boyar.
 
@@ -289,8 +310,15 @@ class ImageSceneRenderer:
         size = (max(1, int(source.width * ratio)), max(1, int(source.height * ratio)))
         resized = source.resize(size, Image.LANCZOS)
 
+        # Görsel cila: küçültmede yumuşayan çizgileri geri keskinleştir,
+        # konturu kalınlaştır (videoda "keçeli kalem" hissi daha güçlü olur).
+        if SHARPEN:
+            resized = resized.filter(ImageFilter.UnsharpMask(radius=1.6, percent=int(115 * SHARPEN), threshold=3))
+
         self.size = size
         self.line_layer, self.color_layer = split_line_and_color(resized)
+        if LINE_BOOST:
+            self.line_layer = _thicken_line_layer(self.line_layer, LINE_BOOST)
         self.pos = ((width - size[0]) // 2, int(top_limit + (avail_h - size[1]) / 2))
         self.line_end = self.duration * self.LINE_PHASE
         self.color_end = self.line_end + self.duration * self.COLOR_PHASE
@@ -620,29 +648,48 @@ def board_label(text, width, height):
     return layer
 
 
-def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None,
-           sheet_path=None, frame_format="jpg"):
-    with open(manifest_path, encoding="utf-8") as f:
-        manifest = json.load(f)
+def _load_subtitles(srt_path, words_path, width, height):
+    """SRT + (varsa) kelime zamanlarını okuyup SubtitleRenderer üretir."""
+    if not srt_path or not os.path.exists(srt_path):
+        return None
+    with open(srt_path, encoding="utf-8") as f:
+        cues = parse_srt(f.read())
+    if not cues:
+        return None
 
-    subs = None
-    if srt_path and os.path.exists(srt_path):
-        with open(srt_path, encoding="utf-8") as f:
-            cues = parse_srt(f.read())
-        if cues:
-            subs = SubtitleRenderer(cues, width, height)
+    words = None
+    if words_path and os.path.exists(words_path) and os.environ.get("SUBTITLE_KARAOKE", "1") != "0":
+        try:
+            with open(words_path, encoding="utf-8") as wf:
+                data = json.load(wf)
+            words = data.get("words") if isinstance(data, dict) else data
+            if not isinstance(words, list) or not words:
+                words = None
+        except (OSError, json.JSONDecodeError):
+            words = None
+    return SubtitleRenderer(cues, width, height, words=words)
 
-    scenes = manifest.get("scenes", [])
-    if not scenes:
-        raise SystemExit("manifest içinde sahne yok")
 
-    os.makedirs(out_dir, exist_ok=True)
+def _ink_coverage(img):
+    """Çizim alanındaki koyu piksel oranı (boş sayfa kontrolü için)."""
+    area = img.crop((0, 0, img.width, int(img.height * 0.72))).convert("L")
+    area = area.resize((96, 96), Image.BILINEAR)
+    dark = sum(area.histogram()[:110])
+    return dark / (96 * 96)
+
+
+def _render_scenes(scenes, first_scene_no, start_time, start_frame, fps, width, height,
+                   with_hand, subs, out_dir, frame_format):
+    """Sahne listesini kare kare çizer; (yazılan kare sayısı, dosyalar) döner."""
     hand_variants = make_variants(load_hand(width * 0.56)) if with_hand else []
-    frame_idx = 0
-    elapsed = 0.0
+    frame_idx = start_frame
+    elapsed = start_time
     written = []
 
-    for scene_no, scene in enumerate(scenes):
+    blank_scenes = []
+    for offset, scene in enumerate(scenes):
+        scene_no = first_scene_no + offset
+        coverage = None
         scene_id = scene.get("id") or pick_scene_for_text(scene.get("text", ""))
         duration = float(scene.get("duration", 3.0))
         hand = hand_variants[scene_no % len(hand_variants)] if hand_variants else None
@@ -665,6 +712,8 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
                                           int(height * 0.115)), label_layer)
             if subs:
                 subs.draw(frame, elapsed + t)
+            if coverage is None and i >= renderer.n_frames // 3:
+                coverage = _ink_coverage(frame)
             out_file = os.path.join(out_dir, f"frame_{frame_idx:05d}.{frame_format}")
             rgb = frame.convert("RGB")
             if frame_format == "png":
@@ -672,18 +721,106 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
                 rgb.save(out_file, compress_level=1)
             else:
                 # JPEG q=95 4:4:4: çizgi sanatı için görsel olarak kayıpsıza yakın,
-                # PNG'den ~7 kat hızlı (45 sn video için ~2-3 dakika kazanç)
+                # PNG'den ~7 kat hızlı
                 rgb.save(out_file, quality=95, subsampling=0)
             written.append(out_file)
             frame_idx += 1
 
+        if coverage is not None and coverage < 0.006:
+            blank_scenes.append((scene_no + 1, scene_id, coverage))
+            print(f"UYARI: sahne {scene_no + 1} ({scene_id}) neredeyse boş "
+                  f"(mürekkep %{coverage * 100:.2f})")
+
         elapsed += renderer.n_frames / fps
 
+    return frame_idx - start_frame, written
+
+
+def _worker(payload):
+    """Paralel render için işçi süreç (modül düzeyinde olmalı: picklable)."""
+    scenes, first_no, start_time, start_frame, fps, width, height, with_hand, \
+        srt_path, words_path, out_dir, frame_format = payload
+    subs = _load_subtitles(srt_path, words_path, width, height)
+    written, files = _render_scenes(scenes, first_no, start_time, start_frame, fps, width,
+                                    height, with_hand, subs, out_dir, frame_format)
+    return written, files
+
+
+def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None,
+           sheet_path=None, frame_format="jpg", words_path=None, workers=None):
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    scenes = manifest.get("scenes", [])
+    if not scenes:
+        raise SystemExit("manifest içinde sahne yok")
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Kare sayıları ve başlangıç zamanları (paralel iş bölümü için de gerekli)
+    frame_counts = [max(1, int(round(max(0.8, float(sc.get("duration", 3.0))) * fps)))
+                    for sc in scenes]
+    start_times = []
+    acc_frames = 0
+    acc_time = 0.0
+    for count in frame_counts:
+        start_times.append(acc_time)
+        acc_frames += count
+        acc_time += count / fps
+    total_frames = acc_frames
+
+    if workers is None:
+        workers = int(os.environ.get("RENDER_WORKERS", "1") or 1)
+    workers = max(1, min(workers, len(scenes)))
+
+    written = []
+    if workers > 1:
+        # Sahne sınırlarından böl: her işçi bitişik sahneleri çizer (deterministik)
+        target = total_frames / workers
+        chunks = []
+        chunk, chunk_start, frames_in_chunk = [], 0, 0
+        for idx, count in enumerate(frame_counts):
+            chunk.append(idx)
+            frames_in_chunk += count
+            if frames_in_chunk >= target and len(chunks) < workers - 1:
+                chunks.append((chunk, chunk_start, frames_in_chunk))
+                chunk_start += frames_in_chunk
+                chunk, frames_in_chunk = [], 0
+        if chunk:
+            chunks.append((chunk, chunk_start, frames_in_chunk))
+
+        payloads = []
+        for chunk, frame_offset, _frames in chunks:
+            first_no = chunk[0]
+            payloads.append((
+                [scenes[i] for i in chunk], first_no, start_times[first_no],
+                frame_offset, fps, width, height, with_hand, srt_path, words_path,
+                out_dir, frame_format
+            ))
+
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=len(payloads)) as pool:
+                results = list(pool.map(_worker, payloads))
+            for _count, files in results:
+                written.extend(files)
+            print(f"Paralel render: {len(payloads)} işçi")
+        except Exception as err:  # noqa: BLE001 - herhangi bir sorunda seri devam
+            print(f"Paralel render başarısız ({err}); seri render'a dönülüyor")
+            subs = _load_subtitles(srt_path, words_path, width, height)
+            _count, written = _render_scenes(scenes, 0, 0.0, 0, fps, width, height,
+                                             with_hand, subs, out_dir, frame_format)
+    else:
+        subs = _load_subtitles(srt_path, words_path, width, height)
+        _count, written = _render_scenes(scenes, 0, 0.0, 0, fps, width, height,
+                                         with_hand, subs, out_dir, frame_format)
+
+    written.sort()
     if sheet_path:
         sheet = make_sheet(written, sheet_path)
         if sheet:
             print(f"Önizleme: {sheet}")
-    print(f"OK {frame_idx} kare üretildi -> {out_dir}")
+    print(f"OK {len(written)} kare üretildi -> {out_dir}")
 
 
 def main():
@@ -695,6 +832,10 @@ def main():
     ap.add_argument("--srt", default=None, help="Altyazı dosyası (karelere gömülür)")
     ap.add_argument("--no-hand", action="store_true", help="El sprite'ını kapat")
     ap.add_argument("--sheet", default=None, help="Önizleme görseli (4 kare) yolu")
+    ap.add_argument("--words", default=None,
+                    help="TTS kelime zamanları (JSON): karaoke altyazı için")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="Paralel render işçi sayısı (varsayılan: RENDER_WORKERS veya 1)")
     ap.add_argument("--format", default="jpg", choices=["jpg", "png"],
                     help="Kare biçimi (varsayılan jpg: hızlı, png: kayıpsız/yavaş)")
     ap.add_argument("--list-scenes", action="store_true",
@@ -710,7 +851,7 @@ def main():
     w, h = args.size.lower().split("x")
     render(args.manifest, args.out, args.fps, int(w), int(h),
            with_hand=not args.no_hand, srt_path=args.srt, sheet_path=args.sheet,
-           frame_format=args.format)
+           frame_format=args.format, words_path=args.words, workers=args.workers)
 
 
 if __name__ == "__main__":

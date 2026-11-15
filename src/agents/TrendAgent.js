@@ -169,15 +169,40 @@ export class TrendAgent {
     };
   }
 
+  /**
+   * Başlık kalitesini 0-10 arası puanlar: somut mu, soru mu, çizilebilir mi,
+   * magazin/efsane mi? Aday listesini sıralamak ve zayıf konuyu reddetmek için.
+   */
+  scoreTopic(title) {
+    const text = String(title || '').trim();
+    if (!text) return -5;
+    let score = 3;
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (/\d/.test(text)) score += 2;                                   // sayı = somutluk
+    if (/(neden|nasıl|niçin|ne kadar|hangi|mi\?|mı\?)/i.test(text)) score += 2;
+    if (/(bulundu|keşfedildi|icat|yapıldı|kullanılır|olur|bozulmaz|saklanır|üretilir)/i.test(text)) score += 1;
+    if (words >= 3 && words <= 9) score += 1;
+    if (words > 12) score -= 2;
+    if (text.length > 80) score -= 2;
+    if (/(gizem|gizemli|efsane|mit|söylenti|iddia|dedikodu|magazin|ünlü|skandal|komplo)/i.test(text)) score -= 5;
+    if (/(ilginç|inanılmaz|şaşırtıcı|harika|mükemmel|inanılmaz)/i.test(text)) score -= 2;
+    return Math.max(-5, Math.min(10, score));
+  }
+
   async pickDailyTopic() {
     const candidates = await this.fetchCandidates();
     const usedTopics = await storage.getUsedTopics();
     const recentCategories = await storage.getRecentCategories(6);
 
-    const candidateList = candidates
-      .map((item, idx) => {
-        return `${idx + 1}. [${item.sourceCategory}] ${item.title}`;
-      })
+    // Başlıkları puana göre sırala: model en umut verici adayları önce görsün
+    const scored = candidates
+      .map((item) => ({ ...item, score: this.scoreTopic(item.title) }))
+      .filter((item) => item.score > -2)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15);
+
+    const candidateList = scored
+      .map((item, idx) => `${idx + 1}. [${item.sourceCategory}] ${item.title} (uygunluk: ${item.score}/10)`)
       .join('\n');
 
     const usedList = usedTopics.slice(-60).join(', ') || 'Yok';
@@ -203,7 +228,7 @@ export class TrendAgent {
       '- "topic" en fazla 8 kelime ve 70 karakter olsun; sonunda nokta olmasın.',
       '- Konu beyaz tahtaya keçeli kalemle somut nesneler çizilerek anlatılabilir olmalı.',
       '- Az bilinen, şaşırtıcı bir bilgi içermeli; "neden/nasıl" sorusuna cevap vermeli.',
-      '- 45-50 saniyelik videoya sığacak tek bir odak konusu seç.',
+      '- 30-45 saniyelik videoya sığacak tek bir odak konusu seç.',
       strict ? '- Önceki cevabın uygun değildi (tekrar/İngilizce/çok uzun). TAMAMEN farklı, TÜRKÇE, kısa bir konu seç.' : '',
       '',
       'Sadece şu JSON formatında yanıt ver:',
@@ -235,6 +260,16 @@ export class TrendAgent {
           log('TrendAgent', `Tekrar eden konu reddedildi: "${candidate.topic}"`, 'WARN');
           continue;
         }
+        const quality = this.scoreTopic(candidate.topic);
+        if (quality < 2) {
+          log(
+            'TrendAgent',
+            `Zayıf konu reddedildi (${quality}/10, soyut/magazin/çok uzun): "${candidate.topic}"`,
+            'WARN'
+          );
+          continue;
+        }
+        candidate.qualityScore = quality;
         result = candidate;
         break;
       } catch (err) {
@@ -254,7 +289,9 @@ export class TrendAgent {
     log(
       'TrendAgent',
       `Konu seçildi: "${result.topic}" [${result.category}] ` +
-      `Puan: ${result.popularityScore} (${result.source})`
+      `Puan: ${result.popularityScore}` +
+      (result.qualityScore !== undefined ? ` | çizilebilirlik: ${result.qualityScore}/10` : '') +
+      ` (${result.source})`
     );
 
     return result;

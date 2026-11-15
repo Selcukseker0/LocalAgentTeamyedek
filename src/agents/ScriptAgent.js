@@ -1,5 +1,9 @@
 import { askLLM } from '../llm/provider.js';
 import { log } from '../logger.js';
+import { cleanText, countWords, splitSentences } from '../utils/text.js';
+
+// Eski çağrı yerleri bozulmasın: yardımcılar buradan da erişilebilir.
+export { cleanText, countWords, splitSentences };
 
 // Hedef: 45-60 saniyelik Shorts. edge-tts (+20% hız) Türkçe için yaklaşık
 // saniyede 2.9 kelime okuyor; TTS_WORDS_PER_SECOND ile kalibre edilebilir.
@@ -46,29 +50,6 @@ const SYSTEM_PROMPT =
   'açıklama yazma; sadece seslendirilecek tam cümleleri yaz. Uydurma bilgi verme.';
 
 // ---------------------------------------------------------------- metin araçları
-
-function cleanText(value) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .replace(/…{2,}/g, '…')
-    .replace(/\.{3,}/g, '…')
-    .replace(/!{2,}/g, '!')
-    .replace(/\?{2,}/g, '?')
-    .replace(/\s+([.,!?…])/g, '$1')
-    .trim();
-}
-
-export function countWords(text) {
-  return text ? text.split(/\s+/).filter(Boolean).length : 0;
-}
-
-export function splitSentences(text) {
-  return (text || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(/(?<=[.!?])\s+/)
-    .filter(Boolean);
-}
 
 export function estimateSeconds(narration) {
   return countWords(narration) / WPS;

@@ -20,6 +20,11 @@ export class QualityAgent {
     if (srtContent.trim().length < 20 || !srtContent.includes('-->')) {
       errors.push('Altyazı (SRT) dosyası boş veya bozuk.');
     }
+    // Altyazı parça sayısı cümle sayısıyla uyumlu mu?
+    const cueCount = (srtContent.match(/-->/g) || []).length;
+    if (cueCount && cueCount < 6) {
+      log('QualityAgent', `Altyazı parçası az: ${cueCount} (cümle sayısı beklenirdi)`, 'WARN');
+    }
 
     // 2. Çözünürlük, ses akışı, süre ve ses-görüntü senkron kontrolü
     const info = await probeMedia(videoPath);
@@ -34,10 +39,11 @@ export class QualityAgent {
     if (!aStream) {
       errors.push('Videoda ses kanalı yok.');
     }
-    if (vDuration < 35 || vDuration > 62) {
-      errors.push(`Süre hedefin dışında: ${vDuration.toFixed(1)}s (beklenen 45-50s, tolerans 35-62s)`);
-    } else if (vDuration < 42 || vDuration > 53) {
-      log('QualityAgent', `Süre hedefin biraz dışında: ${vDuration.toFixed(1)}s (hedef 45-50s)`, 'WARN');
+    // Hedef 30-45 sn (87-128 kelime). 25 sn altı/55 sn üstü kabul edilmez.
+    if (vDuration < 25 || vDuration > 55) {
+      errors.push(`Süre hedefin dışında: ${vDuration.toFixed(1)}s (hedef 30-45s, kabul 25-55s)`);
+    } else if (vDuration < 28 || vDuration > 48) {
+      log('QualityAgent', `Süre hedefin biraz dışında: ${vDuration.toFixed(1)}s (hedef 30-45s)`, 'WARN');
     }
     if (Math.abs(vDuration - expectedAudioDuration) > 1.5 || Math.abs(vDuration - aDuration) > 1.5) {
       errors.push(`Ses-görüntü senkron farkı çok yüksek (Video: ${vDuration.toFixed(1)}s, Ses: ${aDuration.toFixed(1)}s).`);

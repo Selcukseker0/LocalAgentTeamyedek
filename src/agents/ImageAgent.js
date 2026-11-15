@@ -2,16 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../logger.js';
+import { similarity } from '../utils/text.js';
 
 // Hedef videodaki stil: beyaz kâğıt üzerine keçeli kalem çizimi, sade dolgu.
 // "no text" kritik: görsel modeller Türkçe yazıyı bozuk üretiyor.
 const DEFAULT_STYLE =
-  'hand-drawn black marker line art, whiteboard doodle style, detailed single clear scene, ' +
-  'centered composition, pure white background, simple flat marker coloring ' +
-  '(yellow, blue, orange), thick clean outlines, expressive simple cartoon shapes, ' +
+  'hand-drawn black marker line art, whiteboard doodle style, one single clear scene, ' +
+  'centered composition, large subject filling the frame, pure white background, ' +
+  'simple flat marker coloring in yellow #F2B705, blue #3F7FBF and orange #E07B39, ' +
+  'uniform thick marker outlines, no thin hatching, no gradients, ' +
   'no text, no letters, no numbers, no words, no watermark, no shading, portrait orientation';
 
-const PROVIDERS = ['openai', 'gemini', 'custom'];
+const PROVIDERS = ['openai', 'gemini', 'custom', 'pollinations'];
 
 // Vision doğrulaması bu puanın altındaysa prompt düzeltilip yeniden üretilir.
 const VISION_PASS_SCORE = Number(process.env.IMAGE_VISION_PASS || 7);
@@ -37,23 +39,6 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
   }
 }
 
-function words(text) {
-  return String(text || '')
-    .toLocaleLowerCase('tr')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter((word) => word.length > 2);
-}
-
-function similarity(a, b) {
-  const setA = new Set(words(a));
-  const setB = new Set(words(b));
-  if (!setA.size || !setB.size) return 0;
-  let common = 0;
-  for (const token of setA) if (setB.has(token)) common += 1;
-  return common / new Set([...setA, ...setB]).size;
-}
-
 /**
  * Sahne başına illüstrasyon üretir (Imagen / gpt-image / kendi API'n).
  *
@@ -75,19 +60,24 @@ export class ImageAgent {
   keyFor(provider) {
     if (provider === 'openai') return envValue('OPENAI_API_KEY', 'IMAGE_API_KEY');
     if (provider === 'gemini') return envValue('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'IMAGE_API_KEY');
+    // pollinations.ai anahtarsız çalışır (ücretsiz, oran sınırlı)
+    if (provider === 'pollinations') return 'free';
     return envValue('IMAGE_API_KEY');
   }
 
   /** Görsel üretimi kullanılabilir mi? */
   isEnabled() {
     if (!PROVIDERS.includes(this.provider)) return false;
+    // Ücretsiz, anahtarsız sağlayıcı: kurulum gerektirmez
+    if (this.provider === 'pollinations') return process.env.IMAGE_PROVIDER !== '';
     if (this.provider === 'custom') return Boolean(this.apiUrl && this.keyFor('custom'));
     return Boolean(this.keyFor(this.provider));
   }
 
   statusLine() {
     if (this.isEnabled()) {
-      return `Görsel üretimi açık (IMAGE_PROVIDER=${this.provider}${this.model ? `, model=${this.model}` : ''})`;
+      const extra = this.provider === 'pollinations' ? ' — ücretsiz, anahtarsız, oran sınırlı' : '';
+      return `Görsel üretimi açık (IMAGE_PROVIDER=${this.provider}${this.model ? `, model=${this.model}` : ''})${extra}`;
     }
     if (this.provider && PROVIDERS.includes(this.provider)) {
       return `Görsel üretimi kapalı: IMAGE_PROVIDER=${this.provider} ama API anahtarı yok`;
@@ -118,7 +108,31 @@ export class ImageAgent {
   async requestImage(prompt) {
     if (this.provider === 'openai') return this.openaiImage(prompt);
     if (this.provider === 'gemini') return this.geminiImage(prompt);
+    if (this.provider === 'pollinations') return this.pollinationsImage(prompt);
     return this.customImage(prompt);
+  }
+
+  /**
+   * pollinations.ai — anahtarsız, ücretsiz görsel üretimi (Flux tabanlı).
+   * GET /prompt/<metin>?width=..&height=..&model=flux&nologo=true&seed=..
+   * Ücretsiz katman oran sınırlı: istekler arasında bekleme yapılır.
+   */
+  async pollinationsImage(prompt) {
+    const [w, h] = String(this.size || '1024x1536').split('x').map((n) => parseInt(n, 10));
+    const width = Number.isFinite(w) ? w : 1024;
+    const height = Number.isFinite(h) ? h : 1536;
+    const seed = Math.floor(Math.random() * 1e6);
+    const url =
+      `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 1400))}` +
+      `?width=${width}&height=${height}&model=${this.model || 'flux'}&nologo=true&seed=${seed}`;
+
+    const res = await fetchWithTimeout(url, { headers: { Accept: 'image/jpeg,image/png' } }, 120000);
+    if (!res.ok) throw new Error(`Pollinations hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
+    const type = res.headers?.get?.('content-type') || '';
+    if (!type.startsWith('image/')) {
+      throw new Error(`Pollinations görsel döndürmedi (content-type: ${type || 'bilinmiyor'})`);
+    }
+    return Buffer.from(await res.arrayBuffer());
   }
 
   async openaiImage(prompt) {
@@ -232,6 +246,11 @@ export class ImageAgent {
 
       while (attempt < MAX_ATTEMPTS) {
         const prompt = this.buildPrompt(job, { extraObjects, avoid });
+        if (this.provider === 'pollinations') {
+          // Ücretsiz katman: istekler arasında kısa bekleme (varsayılan 1.5 sn)
+          const delay = Number(process.env.IMAGE_REQUEST_DELAY_MS ?? 1500);
+          if (index > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
+        }
         try {
           const buffer = await this.requestImage(prompt);
           const hash = crypto.createHash('sha1').update(buffer).digest('hex');

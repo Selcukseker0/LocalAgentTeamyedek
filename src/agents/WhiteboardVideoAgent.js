@@ -5,6 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { log } from '../logger.js';
+import { countWords, splitSentences } from '../utils/text.js';
+
+export { splitSentences };
 import { askLLM } from '../llm/provider.js';
 import { ImageAgent } from './ImageAgent.js';
 import { VisionAgent } from './VisionAgent.js';
@@ -15,6 +18,7 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WHITEBOARD_DIR = path.resolve(HERE, '../whiteboard');
 const RENDER_SCRIPT = path.join(WHITEBOARD_DIR, 'render.py');
+const COVER_SCRIPT = path.join(WHITEBOARD_DIR, 'cover.py');
 
 const FPS = 30;
 const WIDTH = 1080;
@@ -90,22 +94,11 @@ function log2(message, level = 'INFO') {
   log('WhiteboardVideoAgent', message, level);
 }
 
-function countWords(text) {
-  return (text || '').split(/\s+/).filter(Boolean).length;
-}
+
 
 // ---------------------------------------------------------------- yardımcılar
 
-export function splitSentences(text) {
-  const clean = (text || '').replace(/\s+/g, ' ').trim();
-  if (!clean) return [];
-  // Türkçe kısaltmalar (vb., vs., Dr.) cümle sonu sayılmasın
-  const protectedText = clean.replace(/\b(vb|vs|Dr|Prof|No|ör)\./gi, (m) => m.replace('.', '\u0001'));
-  return protectedText
-    .split(/(?<=[.!?…])\s+/)
-    .map((s) => s.replace(/\u0001/g, '.').trim())
-    .filter(Boolean);
-}
+
 
 export function parseSrt(srt) {
   return srt
@@ -262,124 +255,6 @@ export class WhiteboardVideoAgent {
     return SCENE_IDS;
   }
 
-  /** Ollama ile her cümleye beyaz tahta sahnesi atar (başarısızsa anahtar kelime). */
-  /**
-   * Cümle → sahne zincirini kurar.
-   * Sıra: Ollama planı → cümle ipucu → metin anahtar kelimeleri → konu sahnesi → dolgu.
-   * @returns {{sceneIds: string[], sceneSources: string[]}}
-   */
-  async planSceneChain(timeline, { hints = null, topic = '', scenes = null } = {}) {
-    if (Array.isArray(scenes) && scenes.length) {
-      const sceneIds = timeline.map((_item, i) => scenes[i % scenes.length]);
-      return { sceneIds, sceneSources: sceneIds.map(() => 'elle') };
-    }
-
-    const available = await this.listScenes();
-    const hintList = Array.isArray(hints) && hints.length === timeline.length ? hints : null;
-    const planned = await this.planScenes(timeline, available, hintList);
-    const anchor = this.pickAnchor(
-      timeline.map((item, i) => `${hintList ? hintList[i] : ''} ${item.text}`),
-      topic
-    );
-
-    const sceneIds = [];
-    const sceneSources = [];
-    const usage = new Map();
-    const useCount = (candidate) => usage.get(candidate) || 0;
-
-    for (let i = 0; i < timeline.length; i++) {
-      const previous = sceneIds[i - 1] || null;
-      let id = planned[i];
-      let source = id ? 'ollama' : null;
-
-      const hintRanked = this.scoreScenes(hintList ? hintList[i] : timeline[i].text);
-      const textRanked = hintList && hintList[i] !== timeline[i].text
-        ? this.scoreScenes(timeline[i].text)
-        : [];
-      const ranked = [...new Set([...hintRanked, ...textRanked])];
-
-      if (id && useCount(id) >= 2) {
-        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
-        if (alternative) {
-          id = alternative;
-          source = 'anahtar kelime';
-        } else {
-          id = this.relatedScene(id, usage, previous) || id;
-          source = 'ilgili sahne';
-        }
-      }
-
-      if (!id) {
-        const fresh = ranked.find((candidate) => candidate !== previous && useCount(candidate) < 2) ||
-          ranked.find((candidate) => useCount(candidate) < 2);
-
-        if (fresh) {
-          id = fresh;
-          source = 'anahtar kelime';
-        } else if (ranked.length) {
-          id = this.relatedScene(ranked[0], usage, previous) || ranked[0];
-          source = 'ilgili sahne';
-        } else if (anchor && useCount(anchor) < 2) {
-          // Konu sahnesi üst üste gelmesin: mümkünse ailesinden devam
-          const alternative = anchor === previous
-            ? this.relatedScene(anchor, usage, previous)
-            : null;
-          id = alternative || anchor;
-          source = alternative ? 'konu ailesi' : 'konu';
-        } else if (anchor) {
-          id = this.relatedScene(anchor, usage, previous) || anchor;
-          source = 'konu ailesi';
-        } else {
-          id = useCount('question') < 2 ? 'question' : 'book';
-          source = 'dolgu';
-        }
-      }
-
-      // Aynı sahne arka arkaya gelmesin (izleyici "tekrar" olarak görüyor)
-      if (id && id === previous) {
-        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
-        if (alternative) {
-          id = alternative;
-          source = 'çeşitlendirme';
-        } else {
-          const related = this.relatedScene(id, usage, previous);
-          if (related && related !== id) {
-            id = related;
-            source = 'ilgili sahne';
-          }
-        }
-      }
-
-      usage.set(id, useCount(id) + 1);
-      sceneIds.push(id);
-      sceneSources.push(source);
-    }
-
-    const fromModel = sceneSources.filter((item) => item === 'ollama').length;
-    log2(
-      `Sahne kaynağı: ${fromModel}/${timeline.length} Ollama, ` +
-      `${timeline.length - fromModel} yedek eşleme` +
-      (anchor ? ` (konu sahnesi: ${anchor})` : '')
-    );
-
-    return { sceneIds, sceneSources };
-  }
-
-  /** Modelin döndürdüğü serbest metni katalogdaki sahne kimliğine çevirir. */
-  normalizeSceneId(value, available) {
-    if (value === null || value === undefined) return null;
-    const raw = String(value).trim().toLocaleLowerCase('tr');
-    if (!raw) return null;
-    if (available.includes(raw)) return raw;
-
-    const snake = raw.replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
-    if (available.includes(snake)) return snake;
-
-    // "vazo", "bal küpü", "ampul" gibi Türkçe cevaplar → anahtar kelime eşlemesi
-    const ranked = this.scoreScenes(raw).filter((id) => available.includes(id));
-    return ranked[0] || null;
-  }
-
   /** Videoda tekrar eden "konu sahnesi": eşleşmeyen cümlelerde bu kullanılır. */
   pickAnchor(texts, topicText = '') {
     const counts = new Map();
@@ -395,57 +270,6 @@ export class WhiteboardVideoAgent {
 
     const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
     return best ? best[0] : null;
-  }
-
-  async planScenes(timeline, availableScenes = SCENE_IDS, hints = null) {
-    if (timeline.length === 0) return [];
-    const catalog = availableScenes
-      .map((id) => `- ${id}: ${SCENE_HINTS[id] || 'serbest çizim'}`)
-      .join('\n');
-
-    const hintBlock = Array.isArray(hints)
-      ? `\nYazarın her cümle için verdiği görsel tarif (cümlenin ne anlattığını gösterir,\n` +
-        `sahne seçiminde cümleden daha belirleyicidir; karşılığı olan katalog sahnesini seç):\n${hints
-          .map((hint, i) => `${i + 1}. ${hint || '(tarif yok)'}`)
-          .join('\n')}\n`
-      : '';
-
-    try {
-      const result = await askLLM({
-        system: 'Sen bir çizim yönetmenisin. Yalnızca istenen JSON nesnesini döndür.',
-        prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
-Her cümle için katalogdan EN UYGUN sahneyi seç. Sahne kimliğini katalogdaki gibi yaz.
-Cümle sırasını koru, sahne sayısı cümle sayısına eşit olsun.
-Her cümlede anlatılan OLAYI/nesneyi düşün; yalnızca tek bir kelimeye bakıp sahne seçme.
-Cümlede geçen bir kelime katalogda varsa ama cümlenin konusu başkaysa, konuya uyan sahneyi seç.
-Katalog:\n${catalog}
-${hintBlock}
-Cümleler:
-${timeline.map((item, i) => `${i + 1}. ${item.text}`).join('\n')}
-
-Yalnızca şu JSON biçimini döndür:
-{"scenes":[{"index":1,"scene":"<katalogdaki kimlik>"}, ...]}`,
-        json: true,
-        temperature: 0.1,
-        numPredict: 700
-      });
-
-      const planned = Array.isArray(result?.scenes) ? result.scenes : [];
-      const byIndex = new Map();
-      for (const item of planned) {
-        const index = Number(item?.index ?? item?.i ?? item?.sentence);
-        const id = this.normalizeSceneId(item?.scene ?? item?.id, availableScenes);
-        if (Number.isFinite(index) && id) byIndex.set(index, id);
-      }
-
-      if (byIndex.size > 0) {
-        // Kısmi plan da işe yarar; eksikler yedek eşleme ile tamamlanır
-        return timeline.map((_item, i) => byIndex.get(i + 1) || null);
-      }
-    } catch (err) {
-      log2(`Ollama sahne planı alınamadı: ${err.message}`, 'WARN');
-    }
-    return timeline.map(() => null);
   }
 
   /** Konu bir sahneyi doyurduğunda aynı görsel aileden devam edilir. */
@@ -492,7 +316,7 @@ Cümlede anlatılan OLAYI göster: kim/ne, ne yapıyor. Tek kelimeye bakıp nesn
 Aynı nesneyi her cümlede tekrarlama; komşu sahneler birbirinden farklı olsun.
 Boş sahne yok: her cümlede en az bir nesne olacak.
 Yerleşim: x ve y 0-1 arası (0.5 = sayfanın ortası), size nesnenin alanın ne kadarını
-kapladığı (0.25-0.6). Ana nesne büyük, ayrıntılar küçük olsun.
+kapladığı (0.45-0.75). Ana nesne büyük olsun, sayfa boş kalmasın; ayrıntılar 0.45.
 
 Katalog:
 ${catalog}
@@ -700,7 +524,51 @@ Yalnızca şu JSON biçimini döndür:
 
   // -------------------------------------------------------------- görüntü
 
-  async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null) {
+  /**
+   * Kapak karesi üretir (1080x1920 jpg).
+   * Kaynak: ilk sahnenin üretilmiş görseli varsa o, yoksa videodan alınan kare.
+   */
+  async makeCover({ workDir, videoPath, title = '', subtitle = '' }) {
+    if (process.env.WHITEBOARD_COVER === '0') return null;
+    const python = await this.resolvePython();
+
+    let framePath = null;
+    for (const candidate of ['scene_01.png', 'scene_02.png', 'scene_03.png']) {
+      const full = path.join(workDir, 'images', candidate);
+      const exists = await fs.stat(full).then(() => true).catch(() => false);
+      if (exists) {
+        framePath = full;
+        break;
+      }
+    }
+
+    if (!framePath) {
+      // Görsel yok: videodan temsili bir kare çek
+      const { ffmpeg } = await resolveBinaries();
+      framePath = path.join(workDir, 'cover_source.png');
+      await execFileAsync(ffmpeg, [
+        '-y', '-ss', '1.5', '-i', videoPath, '-frames:v', '1', framePath
+      ]);
+    }
+
+    const outPath = path.join(workDir, 'cover.jpg');
+    const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 42);
+    const cleanSubtitle = String(subtitle || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+
+    await execFileAsync(python, [
+      COVER_SCRIPT,
+      '--frame', framePath,
+      '--title', cleanTitle,
+      '--subtitle', cleanSubtitle,
+      '--out', outPath,
+      '--size', `${WIDTH}x${HEIGHT}`
+    ]);
+
+    log2(`Kapak: ${outPath}`);
+    return outPath;
+  }
+
+  async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null, wordsPath = null) {
     const python = await this.resolvePython();
     log2('Kareler çiziliyor (Pillow)...');
     const args = [RENDER_SCRIPT, '--manifest', manifestPath, '--out', framesDir,
@@ -708,6 +576,7 @@ Yalnızca şu JSON biçimini döndür:
       '--format', FRAME_FORMAT];
     if (srtPath) args.push('--srt', srtPath);
     if (sheetPath) args.push('--sheet', sheetPath);
+    if (wordsPath) args.push('--words', wordsPath);
     const { stdout } = await execFileAsync(python, args, { maxBuffer: 8 * 1024 * 1024 });
     if (stdout.trim()) log2(stdout.trim());
   }
@@ -746,6 +615,26 @@ Yalnızca şu JSON biçimini döndür:
     }
   }
 
+  /**
+   * Arka plan müziği dosyasını bulur.
+   * Sıra: MUSIC_PATH env → src/whiteboard/assets/music/ içindeki ilk ses dosyası.
+   * Dosya yoksa null döner (müzik opsiyonel, video yine üretilir).
+   */
+  async resolveMusic() {
+    if (process.env.MUSIC_VOLUME === '0' || process.env.MUSIC_PATH === '') return null;
+    const explicit = process.env.MUSIC_PATH;
+    if (explicit) {
+      const exists = await fs.stat(explicit).then(() => true).catch(() => false);
+      if (exists) return explicit;
+      log2(`Müzik dosyası bulunamadı: ${explicit}`, 'WARN');
+      return null;
+    }
+    const dir = path.join(WHITEBOARD_DIR, 'assets', 'music');
+    const files = await fs.readdir(dir).catch(() => []);
+    const hit = files.find((file) => /\.(mp3|m4a|wav|ogg)$/i.test(file));
+    return hit ? path.join(dir, hit) : null;
+  }
+
   async encodeVideo({ framesDir, audioPath, outPath, frameCount, ext = FRAME_FORMAT }) {
     const { ffmpeg } = await resolveBinaries();
     const args = [
@@ -754,6 +643,12 @@ Yalnızca şu JSON biçimini döndür:
       '-i', path.join(framesDir, `frame_%05d.${ext}`)
     ];
     if (audioPath) args.push('-i', audioPath);
+
+    const musicPath = audioPath ? await this.resolveMusic() : null;
+    if (musicPath) {
+      // Müziği video boyunca döngüye al
+      args.push('-stream_loop', '-1', '-i', musicPath);
+    }
 
     args.push(
       '-frames:v', String(frameCount),
@@ -764,9 +659,27 @@ Yalnızca şu JSON biçimini döndür:
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart'
     );
-    if (audioPath) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
-    args.push(outPath);
 
+    if (musicPath) {
+      // Ses kanalını ikiye ayır: biri çıkışa, diğeri müziği kısmak için (sidechain).
+      const volume = Number(process.env.MUSIC_VOLUME ?? 0.16);
+      const fade = Number(process.env.MUSIC_FADE_OUT ?? 0.8);
+      // Girdi 0 kareler (ses yok), 1 = anlatım sesi, 2 = müzik
+      const filter = [
+        '[1:a]asplit=2[voice][sc]',
+        `[2:a]volume=${volume},afade=t=in:st=0:d=0.6[music]`,
+        '[music][sc]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=320[duck]',
+        '[voice][duck]amix=inputs=2:duration=first:dropout_transition=0,' +
+          `afade=t=out:st=${Math.max(0, frameCount / FPS - fade)}:d=${fade}[a]`
+      ].join(';');
+      args.push('-filter_complex', filter, '-map', '0:v', '-map', '[a]',
+        '-c:a', 'aac', '-b:a', '192k', '-shortest');
+      log2(`Arka plan müziği eklendi (${path.basename(musicPath)}, ses ${(volume * 100).toFixed(0)}%).`);
+    } else if (audioPath) {
+      args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+    }
+
+    args.push(outPath);
     await execFileAsync(ffmpeg, args, { maxBuffer: 16 * 1024 * 1024 });
   }
 
@@ -896,8 +809,15 @@ Yalnızca şu JSON biçimini döndür:
         .join(' → ')
     );
 
+    // Karaoke altyazı: TTS kelime zamanları JSON olarak render'a verilir
+    let wordsPath = null;
+    if (Array.isArray(words) && words.length) {
+      wordsPath = path.join(workDir, 'voice_words.json');
+      await fs.writeFile(wordsPath, JSON.stringify({ words }, null, 2), 'utf8');
+    }
+
     const sheetPath = path.join(workDir, 'preview.jpg');
-    await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath);
+    await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath, wordsPath);
     const frames = (await fs.readdir(framesDir))
       .filter((f) => f.endsWith(`.${FRAME_FORMAT}`))
       .sort();
@@ -946,11 +866,26 @@ Yalnızca şu JSON biçimini döndür:
     });
     log2(`Shorts hazır: ${finalPath} (${finalDuration.toFixed(1)}s, ${frames.length} kare)`);
     log2(`Çalıştırma bilgisi: ${runInfo}`);
+
+    // YouTube kapak karesi (thumbnail): çizim + büyük başlık
+    let coverPath = null;
+    try {
+      coverPath = await this.makeCover({
+        workDir,
+        videoPath: finalPath,
+        title: manifest.scenes[0]?.label || topic || '',
+        subtitle: manifest.scenes[0]?.text || ''
+      });
+    } catch (err) {
+      log2(`Kapak üretilemedi (video yine hazır): ${err.message}`, 'WARN');
+    }
+
     return {
       videoPath: finalPath,
       duration: finalDuration,
       frameCount: frames.length,
       previewPath: sheetPath,
+      coverPath,
       scenes: manifest.scenes.map((sc) => sc.id)
     };
   }

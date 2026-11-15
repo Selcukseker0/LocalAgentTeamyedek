@@ -1,5 +1,6 @@
 import { log } from '../logger.js';
 import { askLLM } from '../llm/provider.js';
+import { splitSentences } from '../utils/text.js';
 
 // Kaynak havuzu: Türkçe ve İngilizce Wikipedia. Anahtar gerekmez.
 const WIKI = {
@@ -58,13 +59,6 @@ async function articleExtract(host, title, sentences = 12) {
     title: page.title || title,
     extract: String(page.extract || '').replace(/\s+/g, ' ').trim()
   };
-}
-
-function splitSentences(text) {
-  return String(text || '')
-    .split(/(?<=[.!?])\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 /** Bir cümlede somut veri var mı? (sayı, yıl, yüzde, özel isim) */
