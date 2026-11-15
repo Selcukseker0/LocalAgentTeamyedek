@@ -1,8 +1,8 @@
-import { askOllama } from '../llm/ollamaClient.js';
+import { askLLM } from '../llm/provider.js';
 
 export class ReviewerAgent {
   async reviewScript(scriptObj) {
-    return askOllama({
+    return askLLM({
       system: `Sen titiz bir Türkçe YouTube Shorts editörüsün.
 Senaryoda yalnızca anlaşılır ve doğal Türkçe olmalı. Uydurma/anlamsız kelime, başka dil veya şüpheli bilgi görürsen mutlaka reddet.
 Tüm ölçütler karşılanmadıkça onay verme.

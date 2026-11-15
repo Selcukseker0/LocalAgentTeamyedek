@@ -48,6 +48,32 @@ Senaryo, modele "cümle dizisi" olarak yazdırılır (`sentences: [{text, scene}
 genişletilir; 109 kelimenin altında kalırsa açık hata verilir (bozuk video
 üretilmez). Uzun çıktı ise kısaltılır.
 
+### Senaryoyu hangi model yazıyor?
+
+Varsayılan yerel Ollama (`qwen2.5:7b`). Daha iyi metin için bulut modeli
+kullanılabilir:
+
+```env
+LLM_PROVIDER=gemini          # ollama | gemini | anthropic
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.0-flash
+# veya
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-5
+```
+
+Bulut modeli hata verirse (anahtar yok, kota, ağ) akış durmaz; otomatik olarak
+Ollama'ya düşer ve konsola uyarı yazar.
+
+Senaryo kurgusu kısa video şablonuna göre istenir: **kanca (1-2 cümle) →
+soru → sebep 1 → sebep 2 → kapanış sorusu**. Her cümle için ayrıca iki alan
+gelir:
+
+- `scene`: beyaz tahtaya çizilecek somut nesne (ör. "bal kavanozu")
+- `label`: tahtanın üstüne el yazısıyla yazılacak 1-3 kelimelik etiket
+  (ör. "3000 YIL", "SU YOK", "ANTİSEPTİK")
+
 Hız kalibrasyonu: `tr-TR-AhmetNeural --rate=+20%` yaklaşık **saniyede 2.9
 kelime** okuyor. Farklı ses/hız kullanırsanız `.env` içinde
 `TTS_WORDS_PER_SECOND` değerini güncelleyin (örn. `2.6`).
@@ -225,6 +251,17 @@ Hız için:
 - Ek Ollama incelemesi varsayılan olarak **kapalı**; `--review` ile açılır (her tur ~1 dk ekler).
 - Kareler varsayılan olarak **JPEG** yazılır (`FRAME_FORMAT=jpg`). PNG yaklaşık 4 kat yavaştır.
 - `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
+
+## Ses sorunları
+
+Video üretildikten sonra konsolda iki satırdan birini görürsünüz:
+
+- `Ses videoya eklendi (46.2s).` → ses mp4 içinde.
+- `UYARI: Ses dosyası verildi ama mp4 içinde ses akışı yok!` → mux başarısız.
+
+Seslendirme hiç üretilemezse akış açık hata verir (`Seslendirme başarısız...`),
+sessiz video üretmez. Sık nedenler: `edge_tts` yanlış Python'a kurulu
+(`PYTHON_BIN` ayarlayın), internet yok veya `TTS_VOICE` geçersiz.
 
 ## Kontroller
 

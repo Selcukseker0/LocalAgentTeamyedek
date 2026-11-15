@@ -38,14 +38,31 @@ export class VoiceAgent {
     const cleanText = narration.replace(/\s+/g, ' ').trim();
 
     // edge-tts komutu yerine "python -m edge_tts" kullanılır (PATH sorununu önler)
-    await execFileAsync(config.pythonBin, [
-      '-m', 'edge_tts',
-      '--voice', config.ttsVoice,
-      '--rate=+20%',
-      '--text', cleanText,
-      '--write-media', audioPath,
-      '--write-subtitles', vttPath
-    ]);
+    try {
+      await execFileAsync(config.pythonBin, [
+        '-m', 'edge_tts',
+        '--voice', config.ttsVoice,
+        '--rate=+20%',
+        '--text', cleanText,
+        '--write-media', audioPath,
+        '--write-subtitles', vttPath
+      ], { maxBuffer: 8 * 1024 * 1024 });
+    } catch (err) {
+      const detail = String(err?.stderr || err?.message || '').trim().slice(0, 300);
+      throw new Error(
+        `Seslendirme başarısız (${config.pythonBin} -m edge_tts): ${detail}\n` +
+        'İnternet bağlantısı ve "python -m pip install edge-tts" kurulumunu kontrol edin.'
+      );
+    }
+
+    const audioStat = await fs.stat(audioPath).catch(() => null);
+    if (!audioStat || audioStat.size < 5000) {
+      throw new Error(
+        `Ses dosyası oluşmadı veya boş (${audioPath}). ` +
+        'edge-tts çıktı vermediyse internet bağlantısını kontrol edin.'
+      );
+    }
+    log('VoiceAgent', `Ses dosyası: ${(audioStat.size / 1024).toFixed(0)} KB`);
 
     const vtt = await fs.readFile(vttPath, 'utf8');
     await fs.writeFile(srtPath, vttToSrt(vtt), 'utf8');

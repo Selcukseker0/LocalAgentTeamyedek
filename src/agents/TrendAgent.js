@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { askOllama } from '../llm/ollamaClient.js';
+import { askLLM } from '../llm/provider.js';
 import { storage } from '../storage.js';
 import { log } from '../logger.js';
 
@@ -215,7 +215,7 @@ export class TrendAgent {
     let result = null;
     for (const strict of [false, true]) {
       try {
-        const candidate = await askOllama({
+        const candidate = await askLLM({
           system,
           prompt: buildPrompt(strict),
           json: true,
