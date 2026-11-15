@@ -7,6 +7,7 @@
  *   node src/scripts/autoVideo.js --topic "Buz neden kaygandır?"   # konuyu sen seç
  *   node src/scripts/autoVideo.js --review                         # ek Ollama incelemesi (yavaş)
  *   node src/scripts/autoVideo.js --text "Metin..."                # senaryoyu Ollama'ya yazdırma
+ *   node src/scripts/autoVideo.js --scenes "coffee,map,chart"      # sahne zincirini elle ver
  *
  * Gereksinimler: Ollama (senaryo/trend), edge-tts (ses), Pillow + ffmpeg (video).
  */
@@ -123,11 +124,18 @@ async function main() {
 
   // 4) Video
   const fileName = `shorts_whiteboard_${ts}.mp4`;
+  const manualScenes = (argValue('scenes') || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
   const result = await video.renderShorts({
     audioPath,
     srtPath,
     narration: scriptObj.narration,
     sceneHints: scriptObj.sceneHints,
+    topic: topicObj.topic,
+    scenes: manualScenes.length ? manualScenes : null,
     workDir,
     fileName
   });

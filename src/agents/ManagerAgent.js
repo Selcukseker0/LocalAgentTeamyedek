@@ -66,6 +66,7 @@ export class ManagerAgent {
           srtPath,
           narration: scriptObj.narration,
           sceneHints: scriptObj.sceneHints,
+          topic: topicObj?.topic || scriptObj.title || '',
           workDir
         });
 

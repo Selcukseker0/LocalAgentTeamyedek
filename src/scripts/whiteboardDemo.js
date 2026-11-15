@@ -250,6 +250,8 @@ async function main() {
     audioPath: audioArg ? path.resolve(audioArg) : null,
     srtPath,
     narration,
+    // Konu sahnesi (eşleşmeyen cümlelerde kullanılır): metnin ilk cümlesi
+    topic: narration.split(/(?<=[.!?…])\s+/)[0] || narration,
     workDir: outDir,
     fileName
   });
