@@ -40,6 +40,11 @@ export function findAbstractWords(text) {
   return matches ? [...new Set(matches.map((item) => item.toLocaleLowerCase('tr')))] : [];
 }
 const MAX_REGEN = 2;
+// Toplam senaryo bütçesi: model yavaşsa (7b, CPU) 20 dakika beklemek yerine
+// elde olanla devam edilir.
+const SCRIPT_BUDGET_MS = Number(process.env.SCRIPT_BUDGET_SEC || 600) * 1000;
+// Bu eşiğin altındaki sayılar (0-99) kaynak denetiminden muaf
+const GROUNDING_MIN_NUMBER = Number(process.env.GROUNDING_MIN_NUMBER || 100);
 // Editör puanı bunun altındaysa senaryo bir kez daha yazdırılır.
 const CRITIQUE_MIN_SCORE = Number(process.env.SCRIPT_MIN_SCORE || 7);
 const LABEL_MAX_CHARS = 18;
@@ -106,6 +111,117 @@ export function checkSentence(value) {
   if (words > MAX_SENTENCE_WORDS) return { ok: false, text: raw, reason: `çok uzun (${words})` };
   if (!/[.!?]$/.test(raw)) return { ok: false, text: raw, reason: 'noktalama yok' };
   return { ok: true, text: ensureSentenceCase(raw), reason: null };
+}
+
+/**
+ * Uzun cümleyi virgül / bağlaç sınırlarından böler: model 20-30 kelime yazsa da
+ * cümle atılmaz, iki kısa cümleye dönüşür. Bağlaç korunur ("... ve bu yüzden ...").
+ */
+const CLAUSE_SEP = /(,\s*|;\s*|\s+(?:ama|ancak|fakat|çünkü|bu yüzden|bu sayede|dolayısıyla|ve)\s+)/i;
+const LEADING_CONJ = /^(?:ve|ama|ancak|fakat|çünkü|bu yüzden|bu sayede|dolayısıyla)\s+/i;
+const CONJ_SEP = /\s+(ama|ancak|fakat|çünkü|bu yüzden|bu sayede|dolayısıyla|ve)\s+$/i;
+
+function capitalizeTr(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  const first = trimmed.charAt(0);
+  return first === first.toLocaleUpperCase('tr') ? trimmed : first.toLocaleUpperCase('tr') + trimmed.slice(1);
+}
+
+/** Tek başına uzun kalan parçayı kelime sınırından böler. */
+function hardSplit(clause, maxWords) {
+  const tokens = clause.split(/\s+/);
+  const chunk = Math.max(MIN_SENTENCE_WORDS, Math.floor(maxWords * 0.9));
+  const pieces = [];
+  for (let i = 0; i < tokens.length; i += chunk) {
+    const part = tokens.slice(i, i + chunk).join(' ').trim();
+    if (countWords(part) >= 3) pieces.push(part);
+  }
+  return pieces;
+}
+
+const CONJUNCTIONS = new Set(['ama', 'ancak', 'fakat', 'çünkü', 'bu yüzden', 'bu sayede', 'dolayısıyla', 've']);
+
+export function splitLongSentence(text, maxWords = MAX_SENTENCE_WORDS) {
+  const raw = cleanText(text);
+  if (!raw) return [];
+  if (countWords(raw) <= maxWords) return [raw];
+
+  const body = raw.replace(/[.!?]+$/, '').trim();
+
+  // Ayraçları sırayla tara: {text, sepBefore} listesi
+  const scanner = new RegExp(CLAUSE_SEP.source, 'gi');
+  const clauses = [];
+  let pendingSep = '';
+  let lastIndex = 0;
+  for (const match of body.matchAll(scanner)) {
+    const clauseText = body.slice(lastIndex, match.index).trim();
+    if (clauseText) clauses.push({ text: clauseText, sepBefore: pendingSep });
+    pendingSep = match[1].trim();
+    lastIndex = match.index + match[0].length;
+  }
+  const tail = body.slice(lastIndex).trim();
+  if (tail) clauses.push({ text: tail, sepBefore: pendingSep });
+
+  const sentences = [];
+  let current = '';
+  const flush = () => {
+    const value = current.trim();
+    if (value) sentences.push(value);
+    current = '';
+  };
+
+  for (const clause of clauses) {
+    const pieces = countWords(clause.text) <= maxWords ? [clause.text] : hardSplit(clause.text, maxWords);
+    for (const [index, piece] of pieces.entries()) {
+      const sep = index === 0 ? clause.sepBefore : ',';
+      if (!current) {
+        current = capitalizeTr(piece.replace(LEADING_CONJ, ''));
+        continue;
+      }
+      let candidate;
+      if (CONJUNCTIONS.has(sep.toLocaleLowerCase('tr'))) candidate = `${current} ${sep} ${piece}`;
+      else if (sep) candidate = `${current}, ${piece}`;
+      else candidate = `${current} ${piece}`;
+
+      if (countWords(candidate) > maxWords) {
+        flush();
+        current = capitalizeTr(piece.replace(LEADING_CONJ, ''));
+      } else {
+        current = candidate;
+      }
+    }
+  }
+  flush();
+
+  // Kısa kırıntıları komşusuna ekle, baş harf ve noktayı düzelt
+  const result = [];
+  for (const sentence of sentences) {
+    const clean = capitalizeTr(sentence.replace(/[,;]+$/, '').trim());
+    if (result.length && countWords(clean) < MIN_SENTENCE_WORDS) {
+      const previous = result[result.length - 1];
+      if (countWords(`${previous} ${clean}`) <= maxWords) {
+        result[result.length - 1] = `${previous} ${clean}`;
+        continue;
+      }
+    }
+    result.push(clean);
+  }
+
+  return result
+    .map((sentence) => `${sentence.replace(/[.,;]+$/, '').trim()}.`)
+    .filter((sentence) => countWords(sentence) >= MIN_SENTENCE_WORDS);
+}
+
+/** Kısa cümleyi öncekine eklerken iki nokta değil virgül kullanır. */
+export function joinSentences(first, second) {
+  const head = String(first || '').trim().replace(/[.!?]+$/, '');
+  const tail = String(second || '').trim().replace(/[.!?]+$/, '');
+  if (!tail) return `${head}.`;
+  const soft = tail.charAt(0) === tail.charAt(0).toLocaleLowerCase('tr')
+    ? tail
+    : tail.charAt(0).toLocaleLowerCase('tr') + tail.slice(1);
+  return `${head}, ${soft}.`;
 }
 
 function ensureSentenceCase(text) {
@@ -205,14 +321,87 @@ export function normalizeScenes(raw) {
 export function sanitizeScenes(scenes) {
   const kept = [];
   const reasons = new Map();
+  let split = 0;
+  let merged = 0;
+  let pendingShort = null;   // sonraki geçerli cümleye eklenecek kısa parça
+  let lastScene = null;
+
+  const pushText = (scene, text) => {
+    const value = capitalizeTr(text.trim());
+    if (!value) return;
+    if (pendingShort) {
+      const together = joinSentences(pendingShort, value);
+      if (countWords(together) <= MAX_SENTENCE_WORDS) {
+        kept.push({ ...scene, narration: together });
+        merged += 1;
+        pendingShort = null;
+        return;
+      }
+      pendingShort = null;   // sığmadı, kısa parça düşer
+    }
+    kept.push({ ...scene, narration: value });
+  };
+
+  const drop = (reason) => reasons.set(reason, (reasons.get(reason) || 0) + 1);
+
   for (const scene of scenes) {
     const verdict = checkSentence(scene.narration);
-    if (!verdict.ok) {
-      reasons.set(verdict.reason, (reasons.get(verdict.reason) || 0) + 1);
+    lastScene = scene;
+
+    if (verdict.ok) {
+      pushText(scene, verdict.text);
       continue;
     }
-    kept.push({ ...scene, narration: verdict.text });
+
+    // Model 16 kelimeden uzun yazdı: cümleyi atma, böl
+    if (verdict.reason?.startsWith('çok uzun')) {
+      const valid = splitLongSentence(scene.narration)
+        .map((piece) => checkSentence(piece))
+        .filter((piece) => piece.ok);
+      if (valid.length) {
+        split += 1;
+        valid.forEach((piece) => pushText(scene, piece.text));
+        continue;
+      }
+    }
+
+    // Çok kısa cümle: öncekine ekle; olmuyorsa sonrakine eklemek için beklet
+    if (verdict.reason?.startsWith('çok kısa') && verdict.text) {
+      const previous = kept[kept.length - 1];
+      if (previous) {
+        const together = joinSentences(previous.narration, verdict.text);
+        if (countWords(together) <= MAX_SENTENCE_WORDS) {
+          previous.narration = together;
+          merged += 1;
+          continue;
+        }
+      }
+      if (!pendingShort) {
+        pendingShort = verdict.text;
+        merged += 1;   // sayıma "birleştirildi" olarak yazılır
+        continue;
+      }
+      pendingShort = joinSentences(pendingShort, verdict.text);
+      continue;
+    }
+
+    drop(verdict.reason);
   }
+
+  // Sonda kalan kısa parça: öncekine ekle, olmuyorsa tek cümle olarak tut
+  if (pendingShort) {
+    const previous = kept[kept.length - 1];
+    const together = previous ? joinSentences(previous.narration, pendingShort) : '';
+    if (previous && countWords(together) <= MAX_SENTENCE_WORDS) {
+      previous.narration = together;
+    } else {
+      kept.push({ ...(lastScene || {}), narration: capitalizeTr(pendingShort) });
+    }
+    pendingShort = null;
+  }
+
+  if (split) log('ScriptAgent', `${split} uzun cümle ikiye bölündü.`, 'INFO');
+  if (merged) log('ScriptAgent', `${merged} kısa cümle komşusuna eklendi.`, 'INFO');
   if (reasons.size) {
     const summary = [...reasons.entries()].map(([reason, n]) => `${reason}×${n}`).join(', ');
     log('ScriptAgent', `Bozuk cümleler atıldı: ${summary}.`, 'WARN');
@@ -253,26 +442,40 @@ export function dedupeScenes(scenes, threshold = 0.7) {
   return kept;
 }
 
+/** "3.000" / "3 000" / "3000" aynı sayı; "2,5" ondalık. */
+export function canonicalNumber(raw) {
+  const text = String(raw || '').trim();
+  if (/^\d{1,3}(?:[. ]\d{3})+$/.test(text)) {
+    return String(Number(text.replace(/[. ]/g, '')));
+  }
+  if (/^\d+,\d+$/.test(text)) {
+    return String(Number(text.replace(',', '.')));
+  }
+  return String(Number(text.replace(/\./g, '')) || 0);
+}
+
 /**
- * Senaryodaki sayılar kaynak metinde geçiyor mu? (halüsinasyon kontrolü)
- * Kaynak yoksa kontrol atlanır.
- * @returns {{problems: string[], warnings: string[]}}
+ * Sayılar kaynakta geçiyor mu? Sadece ANLAMLI sayılar denetlenir:
+ * 0-99 arası sayılar ("2 dakika", "%5") yaygın olduğu için serbest,
+ * 100 ve üzeri (yıl, nüfus, ölçü) kaynakta yoksa halüsinasyon sayılır.
  */
-export function checkGrounding(scenes, facts = []) {
+export function checkGrounding(scenes, facts = [], minChecked = 100) {
   const problems = [];
   const warnings = [];
   const source = (facts || []).join(' ').replace(/\s+/g, ' ');
   if (!source) return { problems, warnings };
 
+  const NUMBERS_RE = /\d{1,3}(?:[. ]\d{3})+|\d+(?:[.,]\d+)?/g;
   const sourceNumbers = new Set(
-    (source.match(/\d+(?:[.,]\d+)?/g) || []).map((item) => item.replace(',', '.'))
+    (source.match(NUMBERS_RE) || []).map((item) => canonicalNumber(item))
   );
 
   const ungrounded = [];
   for (const [index, scene] of (scenes || []).entries()) {
-    const numbers = (String(scene.narration || '').match(/\d+(?:[.,]\d+)?/g) || [])
-      .map((item) => item.replace(',', '.'));
-    const foreign = numbers.filter((num) => !sourceNumbers.has(num));
+    const numbers = (String(scene.narration || '').match(NUMBERS_RE) || [])
+      .map((item) => canonicalNumber(item))
+      .filter((num) => Number(num) >= minChecked);
+    const foreign = [...new Set(numbers)].filter((num) => !sourceNumbers.has(num));
     if (foreign.length) ungrounded.push(`${index + 1}. sahne (${foreign.join(', ')})`);
   }
 
@@ -355,7 +558,7 @@ export function validateScript(scenes, { facts = [] } = {}) {
     warnings.push(`${fewObjects} sahnede tek nesne var (2-4 önerilir)`);
   }
 
-  const grounding = checkGrounding(scenes, facts);
+  const grounding = checkGrounding(scenes, facts, GROUNDING_MIN_NUMBER);
   problems.push(...grounding.problems);
   warnings.push(...grounding.warnings);
 
@@ -596,8 +799,10 @@ export class ScriptAgent {
     let attempt = 0;
     let lastProblems = [];
     let lastScript = null;
+    const startedAt = Date.now();
+    const overBudget = () => Date.now() - startedAt > SCRIPT_BUDGET_MS;
 
-    while (attempt <= MAX_REGEN) {
+    while (attempt <= MAX_REGEN && !overBudget()) {
       const outline = await this.createOutline(topicObj, research, feedback);
       const prefix = attempt > 0
         ? `Önceki denemenin sorunları: ${lastProblems.slice(0, 4).join('; ')}.`
@@ -623,10 +828,15 @@ export class ScriptAgent {
       const words = () => countWords(scenes.map((scene) => scene.narration).join(' '));
       log('ScriptAgent', `Taslak: ${scenes.length} cümle, ${words()} kelime.`);
 
-      for (let extra = 0; extra < 3 && words() < MIN_WORDS; extra += 1) {
-        log('ScriptAgent', `${MIN_WORDS - words()} kelime eksik; ek cümle isteniyor.`, 'WARN');
-        const more = await this.extendScenes(topicObj, outline, scenes, MIN_WORDS - words());
+      for (let extra = 0; extra < 2 && words() < MIN_WORDS && !overBudget(); extra += 1) {
+        const before = words();
+        log('ScriptAgent', `${MIN_WORDS - before} kelime eksik; ek cümle isteniyor.`, 'WARN');
+        const more = await this.extendScenes(topicObj, outline, scenes, MIN_WORDS - before);
         scenes = dedupeScenes(sanitizeScenes([...scenes, ...more]));
+        if (words() <= before) {
+          log('ScriptAgent', 'Ek cümlelerde ilerleme yok; senaryo eldekiyle değerlendirilecek.', 'WARN');
+          break;
+        }
       }
 
       // Kapanış sorusu her zaman en sonda
@@ -685,17 +895,35 @@ export class ScriptAgent {
     }
 
     // Son deneme de geçmediyse: sorunlu sahneleri atıp devam et, yeterli değilse dur
-    log('ScriptAgent', `Senaryo ${MAX_REGEN + 1} denemede kontrolü geçemedi.`, 'WARN');
+    log(
+      'ScriptAgent',
+      overBudget()
+        ? `Senaryo bütçesi doldu (${Math.round(SCRIPT_BUDGET_MS / 60000)} dk); eldeki taslak değerlendiriliyor.`
+        : `Senaryo ${MAX_REGEN + 1} denemede kontrolü geçemedi.`,
+      'WARN'
+    );
     const cleaned = dedupeScenes(sanitizeScenes(lastScript?.scenes || []));
     const words = countWords(cleaned.map((scene) => scene.narration).join(' '));
 
-    if (cleaned.length < 8 || words < ACCEPT_MIN_WORDS) {
+    // Kural: kusurlu ama izlenebilir bir video, 20 dakika sonra hata vermekten iyidir.
+    // En az 6 cümle / 55 kelime varsa uyarılarla devam edilir (video ~25 sn olur).
+    const FALLBACK_MIN_SCENES = Number(process.env.SCRIPT_FALLBACK_SCENES || 6);
+    const FALLBACK_MIN_WORDS = Number(process.env.SCRIPT_FALLBACK_WORDS || 55);
+
+    if (cleaned.length < FALLBACK_MIN_SCENES || words < FALLBACK_MIN_WORDS) {
       throw new Error(
         `Senaryo üretilemedi (${cleaned.length} cümle, ${words} kelime). ` +
         `Sorunlar: ${lastProblems.slice(0, 4).join('; ')}. ` +
         'Daha büyük model deneyin (LLM_PROVIDER=gemini veya OLLAMA_MODEL=qwen2.5:14b).'
       );
     }
+
+    log(
+      'ScriptAgent',
+      `Senaryo eksiklerle kabul edildi: ${cleaned.length} cümle, ${words} kelime ` +
+      `(${lastProblems.slice(0, 3).join('; ') || 'kontrol uyarısı'}).`,
+      'WARN'
+    );
 
     const outline = { title: lastScript?.title || topicObj.topic, description: '', tags: [] };
     return this.finalizeScript(

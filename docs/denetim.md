@@ -188,3 +188,25 @@ Kalan (bilinçli olarak yapılmadı): A/B stil denemeleri (tek stil oturdu, veri
 toplamadan bölmek riskli) ve `scenes.py` kataloğunun emekliye ayrılması (anahtarsız
 yedek yol olarak değerli). `ScriptAgent` / `WhiteboardVideoAgent` dosya bölünmesi
 de davranış değiştirmediği için ertelendi.
+
+## 9. Gerçek çalıştırma hatası sonrası düzeltmeler (Windows, qwen2.5:7b)
+
+Kullanıcının ilk gerçek denemesi **20 dakika sonra hata** verdi:
+`Senaryo üretilemedi (7 cümle, 78 kelime)`. Kök nedenler ve yapılanlar:
+
+| # | Kök neden | Düzeltme |
+|---|---|---|
+| 1 | **Araştırma yanlış maddeye gitti**: "Buzun sırrı ne?" → Wikipedia "Mehmed Selim **Sırrı** Paşa" maddesi. Üç "olgu" bir Osmanlı paşası hakkındaydı, senaryo ise buzdan yazılmaya çalışıldı | `ResearchAgent`: `buildSearchQuery()` (soru/süs kelimeleri + Türkçe ekler atılır), `pickBestArticle()` (ilk sonucu körlemesine almaz; ana kelime madde/özet içinde geçmeli), `relevanceScore()` (gövde karşılaştırması: **bal ≠ balık**). Örtüşme `RESEARCH_MIN_MATCH` altındaysa araştırma atlanır |
+| 2 | **Uzun cümleler atılıyordu**: model 17-38 kelime yazıyor, `checkSentence` 16 kelime üstünü "çok uzun" diye siliyordu ("çok uzun (26)×1, (28)×1, (31)×1" satırları) | `splitLongSentence()`: virgül/bağlaç sınırından bölme, bağlaç korunur (`… oluşur, bu yapı sayesinde …`). `sanitizeScenes()` artık bölüyor, atmıyor |
+| 3 | **Kısa cümleler de atılıyordu** ("çok kısa (4)×4") | Kısa cümle önceki cümleye virgülle eklenir; sonda kalan parça tek cümle olarak tutulur |
+| 4 | **Sonsuz/uzun yeniden üretim**: 3 deneme × (plan + 2 bölüm + 3 ek tur) ≈ 20 dk, sonunda hata | `SCRIPT_BUDGET_SEC` (varsayılan 600 s), ek tur 3→2, "ilerleme yoksa dur" kontrolü |
+| 5 | **Hatada çıktı yok**: 7 cümle/78 kelime elde varken akış hata verdi | `SCRIPT_FALLBACK_SCENES`/`SCRIPT_FALLBACK_WORDS` (6/55): kusurlu ama izlenebilir senaryo kabul edilir, uyarı basılır |
+| 6 | **Grounding aşırı katı**: "1. sahne (0)" gibi 0-99 sayılar da halüsinasyon sayılıyor, `3.000` ile `3000` eşleşmiyordu | `canonicalNumber()` (binlik/ondalık normalizasyonu) + yalnızca `GROUNDING_MIN_NUMBER` (100) ve üzeri denetlenir |
+| 7 | **Trend puanı "piramitleri" içindeki "mit"i magazin sayıyordu** | `\p{L}` sınırı: `mit` artık yalnızca tam kelimeyken ceza alır. "sır/sırrı/bilmece/hikayesi" başlıkları -2; kabul eşiği 2 → 3 |
+
+Doğrulama (Ollama olmadan, sahte LLM ile gerçek akış):
+- Aynı senaryo (7b'nin uzun cümleleri) artık **1. denemede** geçiyor: 8 sahne, 88 kelime, ~30 sn, **3 LLM çağrısı** (önce 12).
+- Bütçe dolduğunda/denemeler tükendiğinde hata yerine uyarıyla video üretiliyor (7 sahne, 83 kelime, ~29 sn).
+- Araştırma testleri gerçek olayı kapsıyor: "Buzun sırrı ne?" + "Sırrı Paşa" → **null**; "Buz" → seçilir; "bal" ≠ "balık".
+- `npm test` → **27/27** (9 yeni test: `test/research.test.js`, `test/scriptSplit.test.js`).
+- `npm run whiteboard-demo` → 46.2 s / 1386 kare / 8.4 MB video, render yolu bozulmadı.

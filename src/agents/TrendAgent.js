@@ -184,7 +184,14 @@ export class TrendAgent {
     if (words >= 3 && words <= 9) score += 1;
     if (words > 12) score -= 2;
     if (text.length > 80) score -= 2;
-    if (/(gizem|gizemli|efsane|mit|söylenti|iddia|dedikodu|magazin|ünlü|skandal|komplo)/i.test(text)) score -= 5;
+    // \p{L} sınırı şart: "piramitleri" içindeki "mit" ceza almamalı
+    if (/(?<!\p{L})(gizem|gizemli|efsane|efsanevi|mit|söylenti|iddia|dedikodu|magazin|ünlü|skandal|komplo)(?!\p{L})/iu.test(text)) {
+      score -= 5;
+    }
+    // "sırrı / bilmece / hikayesi" gibi başlıklar somut soru sormaz, çizilemez
+    if (/(?<!\p{L})(sır|sırr[ıi]|sırlar|bilmece|bilmecesi|hikaye|hikayesi)(?!\p{L})/iu.test(text)) {
+      score -= 2;
+    }
     if (/(ilginç|inanılmaz|şaşırtıcı|harika|mükemmel|inanılmaz)/i.test(text)) score -= 2;
     return Math.max(-5, Math.min(10, score));
   }
@@ -261,7 +268,7 @@ export class TrendAgent {
           continue;
         }
         const quality = this.scoreTopic(candidate.topic);
-        if (quality < 2) {
+        if (quality < 3) {
           log(
             'TrendAgent',
             `Zayıf konu reddedildi (${quality}/10, soyut/magazin/çok uzun): "${candidate.topic}"`,
