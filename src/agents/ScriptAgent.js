@@ -13,9 +13,31 @@ const MAX_WORDS = Math.round(TARGET_MAX_SEC * WPS * 0.98);   // 128
 const ACCEPT_MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 0.86); // ~75
 
 const PART_SENTENCES = 7;
-const MIN_SENTENCE_WORDS = 5;
-const MAX_SENTENCE_WORDS = 14;
+const MIN_SENTENCE_WORDS = 6;
+const MAX_SENTENCE_WORDS = 16;
+
+// Sahnelerin çizilebilir olması için: soyut sıfat/isim yasak.
+// Bunlar cümleye girince görsel model ne çizeceğini bilemez.
+const ABSTRACT_WORDS = [
+  'gizemli', 'gizem', 'ilginç', 'enteresan', 'harika', 'inanılmaz', 'şaşırtıcı', 'muhteşem',
+  'büyüleyici', 'etkileyici', 'olağanüstü', 'efsanevi', 'büyülü', 'sıra dışı', 'akıl almaz',
+  'dikkat çekici', 'merak uyandıran', 'fascinating', 'interesting', 'amazing', 'mysterious'
+];
+// \b ASCII tabanlı: Türkçe harfle biten kelimeler (ilginç, şaşırtıcı) eşleşmiyor.
+// Bu yüzden Unicode harf sınırı + yaygın Türkçe çekim ekleri kullanılır
+// ("gizemliydi", "ilginçti" de yakalanır).
+const ABSTRACT_SUFFIXES =
+  '(?:ydi|ydı|ydü|ydu|dir|dır|dür|dur|lik|lık|lük|luk|dı|di|du|dü|ti|tı|te|ta|ce|ca|si|sı|sü|su)?';
+const ABSTRACT_BODY = `(?:${ABSTRACT_WORDS.join('|')})${ABSTRACT_SUFFIXES}`;
+const ABSTRACT_RE = new RegExp(`(?<!\\p{L})${ABSTRACT_BODY}(?!\\p{L})`, 'iu');
+
+export function findAbstractWords(text) {
+  const matches = String(text || '').match(new RegExp(ABSTRACT_RE.source, 'giu'));
+  return matches ? [...new Set(matches.map((item) => item.toLocaleLowerCase('tr')))] : [];
+}
 const MAX_REGEN = 2;
+// Editör puanı bunun altındaysa senaryo bir kez daha yazdırılır.
+const CRITIQUE_MIN_SCORE = Number(process.env.SCRIPT_MIN_SCORE || 7);
 const LABEL_MAX_CHARS = 18;
 
 const SYSTEM_PROMPT =
@@ -186,6 +208,13 @@ export function normalizeScenes(raw) {
         item.image_prompt ?? item.imagePrompt ?? item.visual_prompt ?? item.visualPrompt
         ?? item.visual ?? item.scene ?? ''
       ),
+      visualObjects: (Array.isArray(item.visual_objects)
+        ? item.visual_objects
+        : (Array.isArray(item.visualObjects) ? item.visualObjects
+          : (Array.isArray(item.objects) ? item.objects : [])))
+        .map((obj) => cleanText(typeof obj === 'string' ? obj : obj?.name || ''))
+        .filter(Boolean)
+        .slice(0, 5),
       titleHint: cleanText(item.title ?? item.label ?? item.etiket ?? '')
     }))
     .filter((item) => item.narration);
@@ -244,16 +273,50 @@ export function dedupeScenes(scenes, threshold = 0.7) {
 }
 
 /**
- * Render'dan önceki otomatik kontrol: etiket, numara, yarım cümle, tekrar.
- * @returns {{ok: boolean, problems: string[]}}
+ * Senaryodaki sayılar kaynak metinde geçiyor mu? (halüsinasyon kontrolü)
+ * Kaynak yoksa kontrol atlanır.
+ * @returns {{problems: string[], warnings: string[]}}
  */
-export function validateScript(scenes) {
+export function checkGrounding(scenes, facts = []) {
+  const problems = [];
+  const warnings = [];
+  const source = (facts || []).join(' ').replace(/\s+/g, ' ');
+  if (!source) return { problems, warnings };
+
+  const sourceNumbers = new Set(
+    (source.match(/\d+(?:[.,]\d+)?/g) || []).map((item) => item.replace(',', '.'))
+  );
+
+  const ungrounded = [];
+  for (const [index, scene] of (scenes || []).entries()) {
+    const numbers = (String(scene.narration || '').match(/\d+(?:[.,]\d+)?/g) || [])
+      .map((item) => item.replace(',', '.'));
+    const foreign = numbers.filter((num) => !sourceNumbers.has(num));
+    if (foreign.length) ungrounded.push(`${index + 1}. sahne (${foreign.join(', ')})`);
+  }
+
+  if (ungrounded.length >= 2) {
+    problems.push(`kaynakta olmayan sayı: ${ungrounded.slice(0, 3).join(', ')}`);
+  } else if (ungrounded.length === 1) {
+    warnings.push(`kaynakta olmayan sayı: ${ungrounded[0]}`);
+  }
+  return { problems, warnings };
+}
+
+/**
+ * Render'dan önceki otomatik kontrol: etiket, numara, yarım cümle, tekrar,
+ * soyut kelime, kaynak uyumu.
+ * @returns {{ok: boolean, problems: string[], warnings: string[]}}
+ */
+export function validateScript(scenes, { facts = [] } = {}) {
   const problems = [];
   const warnings = [];
   if (!Array.isArray(scenes) || scenes.length < 8) {
     problems.push(`sahne sayısı ${scenes?.length ?? 0} (en az 8 olmalı)`);
   }
   const seen = new Set();
+  let missingObjects = 0;
+  let fewObjects = 0;
   for (const [index, scene] of (scenes || []).entries()) {
     const no = index + 1;
     const text = scene.narration || '';
@@ -266,6 +329,14 @@ export function validateScript(scenes) {
     if (key && seen.has(key)) problems.push(`${no}. sahne tekrar ediyor`);
     seen.add(key);
 
+    // Çizilebilirlik: soyut kelime varsa görsel model ne çizeceğini bilemez
+    const abstract = findAbstractWords(text);
+    if (abstract.length) {
+      problems.push(`${no}. sahne soyut kelime içeriyor: ${abstract.join(', ')}`);
+    }
+    const objects = Array.isArray(scene.visualObjects) ? scene.visualObjects.filter(Boolean) : [];
+    if (!objects.length) missingObjects += 1;
+    else if (objects.length < 2) fewObjects += 1;
   }
   // Aynı ifade üç kez geçiyorsa senaryo kendini tekrar ediyor demektir
   const trigrams = new Map();
@@ -295,6 +366,17 @@ export function validateScript(scenes) {
   if (scenes?.length && concrete / scenes.length < 0.5) {
     warnings.push(`somut bilgi az (${concrete}/${scenes.length} sahne)`);
   }
+
+  if (missingObjects > 2) {
+    warnings.push(`${missingObjects} sahnede çizilebilir nesne yok`);
+  }
+  if (fewObjects > 3) {
+    warnings.push(`${fewObjects} sahnede tek nesne var (2-4 önerilir)`);
+  }
+
+  const grounding = checkGrounding(scenes, facts);
+  problems.push(...grounding.problems);
+  warnings.push(...grounding.warnings);
 
   const words = countWords((scenes || []).map((scene) => scene.narration).join(' '));
   if (words < ACCEPT_MIN_WORDS) problems.push(`toplam ${words} kelime (en az ${ACCEPT_MIN_WORDS})`);
@@ -330,6 +412,9 @@ export class ScriptAgent {
       'Yapı: ilk 2 saniyede merak uyandıran kısa bir giriş, ortada 4 net bilgi,',
       'sonda tek cümlelik kapanış sorusu.',
       'Her bilgi SOMUT olsun: sayı, tarih, isim veya neden-sonuç içersin.',
+      'Her bilgi ÇİZİLEBİLİR olsun: içinde bir nesne, hayvan, yer veya kişi geçsin.',
+      'Soyut anlatım yapma ("gizemli dünya", "ilginç gerçek" gibi); gözle görülür bir şey anlat.',
+      facts ? 'Yalnızca yukarıdaki doğrulanmış bilgileri kullan; yeni bilgi uydurma.' : '',
       'Aynı fikri farklı kelimelerle tekrar etme.',
       'Dil Türkçe, gündelik ve akıcı olsun. Emin olmadığın bilgiyi yazma.',
       '',
@@ -387,25 +472,30 @@ export class ScriptAgent {
       sections,
       '',
       `Toplam TAM ${target} cümle yaz. Eksik cümle bırakma.`,
-      'Her cümle 7-12 kelime olsun; 5 kelimeden kısa, 14 kelimeden uzun olmasın.',
+      'Her cümle 8-14 kelime olsun; 6 kelimeden kısa, 16 kelimeden uzun olmasın.',
       'Her cümle TEK bir fikir anlatsın (2-4 saniyelik sahne).',
-      'Her cümlede SOMUT bilgi olsun: sayı, tarih, isim veya neden-sonuç.',
+      'Her cümlede SOMUT bilgi olsun: sayı, tarih, isim, yer veya neden-sonuç.',
+      'Her cümlede en az bir ÇİZİLEBİLİR somut isim olsun (nesne, hayvan, yer, kişi, araç).',
+      'Şu soyut kelimeleri KULLANMA: gizemli, ilginç, harika, inanılmaz, şaşırtıcı, muhteşem,',
+      'büyüleyici, etkileyici, efsanevi, sıra dışı, akıl almaz, dikkat çekici, merak uyandıran.',
       'Aynı fikri farklı kelimelerle tekrar etme; her cümle yeni bilgi versin.',
       'Cümlelerde iki nokta (:) kullanma, numaralandırma yapma.',
       '',
-      'Her cümle için üç alan yaz:',
+      'Her cümle için DÖRT alan yaz:',
       '- "narration": sadece seslendirilecek tam cümle. İçine "Kanca cümlesi:", "1)", "Sebep 2:"',
       '  gibi HİÇBİR etiket veya numara yazma. Cümle nokta/soru işareti ile bitsin.',
-      '- "image_prompt": bu cümle için çizilecek TEK sahnenin tarifi (6-16 kelime).',
-      '  Cümlenin İÇİNDEKİ nesneleri say: kim/ne, ne yapıyor, nerede.',
-      '  Örnek: "3000 yıllık Mısır vazosu ve içindeki bal, masanın üstünde",',
+      '- "visual_objects": cümlede GEÇEN 2-4 somut nesne (kısa adlar, Türkçe). Örnek:',
+      '  ["Mısır vazosu","bal","mezar"]. Cümlede olmayan nesne yazma; soyut kavram yazma.',
+      '- "image_prompt": bu nesneleri ve olayı anlatan TEK sahne tarifi (6-16 kelime).',
+      '  Cümlenin İÇİNDEKİ nesneleri say: kim/ne, ne yapıyor, nerede. Yazı/rakam isteme.',
+      '  Örnek: "3000 yıllık Mısır vazosu ve içindeki bal, mezarın içinde duruyor",',
       '  "buz küpü güneşin altında eriyor, yanında su damlası".',
       '  Sadece tek nesne adı yazma (ör. yalnızca "güneş" yazma); soyut kavram çizdirme.',
       '- "title": tahtaya yazılacak en fazla 3 kelimelik vurgu. Cümlede sayı varsa sayıyı',
       '  ("%40", "3 KAT"), yoksa cümledeki en önemli kelimeyi yaz ("KÖPRÜ"). Emin değilsen boş bırak.',
       '',
       'Yalnızca şu JSON biçimini döndür:',
-      '{"scenes":[{"narration":"...","image_prompt":"...","title":"..."}]}'
+      '{"scenes":[{"narration":"...","visual_objects":["...","..."],"image_prompt":"...","title":"..."}]}'
     ].join('\n');
 
     const raw = await this.call(prompt, {
@@ -424,12 +514,15 @@ export class ScriptAgent {
       `Konu: "${topicObj.topic}"`,
       `Mevcut metin (${countWords(existing)} kelime): ${existing}`,
       '',
-      `Bu metne ${Math.ceil(missingWords / 11)} yeni cümle ekle (her biri 10-13 kelime).`,
+      `Bu metne ${Math.ceil(missingWords / 11)} yeni cümle ekle (her biri 9-13 kelime).`,
       'Mevcut cümleleri tekrarlama; yeni ayrıntı, örnek veya karşılaştırma ekle.',
       'Kapanış sorusunu tekrar yazma. Etiket ve numara kullanma.',
       '',
       'Her cümlede yeni ve somut bir bilgi olsun (sayı, isim, neden-sonuç).',
-      'Yalnızca JSON: {"scenes":[{"narration":"...","image_prompt":"...","title":"..."}]}'
+      'Her cümlede en az bir çizilebilir somut isim olsun; soyut kelime (gizemli, ilginç,',
+      'şaşırtıcı, inanılmaz) kullanma.',
+      'Yalnızca JSON: {"scenes":[{"narration":"...","visual_objects":["..."],' +
+      '"image_prompt":"...","title":"..."}]}'
     ].join('\n');
 
     const raw = await this.call(prompt, { temperature: 0.9, numPredict: 800, label: 'ek cümleler' });
@@ -448,6 +541,7 @@ export class ScriptAgent {
   prepareScenes(scenes, topic) {
     const used = new Map();
     let fallbackCount = 0;
+    let objectFallbackCount = 0;
     const prepared = scenes.map((scene) => {
       const title =
         validateTitle(scene.titleHint, scene.narration) ||
@@ -466,15 +560,32 @@ export class ScriptAgent {
         fallbackCount += 1;
       }
 
+      // Çizilebilir nesneler: model vermediyse tariften/etiketten türet
+      let visualObjects = Array.isArray(scene.visualObjects)
+        ? scene.visualObjects.map((item) => cleanText(item)).filter(Boolean).slice(0, 4)
+        : [];
+      if (!visualObjects.length) {
+        visualObjects = visualPrompt
+          .split(/[,;.]/)
+          .map((part) => cleanText(part))
+          .filter((part) => part && part.split(' ').length <= 4)
+          .slice(0, 3);
+        if (visualObjects.length) objectFallbackCount += 1;
+      }
+
       return {
         narration: scene.narration,
         imagePrompt: visualPrompt,
+        visualObjects,
         title: label
       };
     });
 
     if (fallbackCount) {
       log('ScriptAgent', `${fallbackCount} sahne için çizim tarifi konudan türetildi.`, 'WARN');
+    }
+    if (objectFallbackCount) {
+      log('ScriptAgent', `${objectFallbackCount} sahnenin nesne listesi tariften türetildi.`, 'WARN');
     }
     return prepared;
   }
@@ -490,6 +601,7 @@ export class ScriptAgent {
       scenes,
       sceneHints: scenes.map((scene) => scene.imagePrompt || null),
       imagePrompts: scenes.map((scene) => scene.imagePrompt || null),
+      sceneObjects: scenes.map((scene) => (Array.isArray(scene.visualObjects) ? scene.visualObjects : [])),
       labels: scenes.map((scene) => scene.title || null),
       visualQueries: []
     };
@@ -542,6 +654,7 @@ export class ScriptAgent {
         scenes.push({
           narration: closing.text,
           imagePrompt: 'meraklı bir yüz ve büyük bir soru işareti',
+          visualObjects: ['soru işareti', 'meraklı yüz'],
           titleHint: ''
         });
       }
@@ -549,13 +662,29 @@ export class ScriptAgent {
       scenes = this.prepareScenes(scenes, topicObj.topic);
       if (prefix) scenes = dedupeScenes(scenes);
       lastScript = this.buildScript(scenes, outline);
-      const check = validateScript(lastScript.scenes);
+      const check = validateScript(lastScript.scenes, { facts: research?.facts || [] });
 
       if (check.warnings?.length) {
         log('ScriptAgent', `Uyarı: ${check.warnings.join('; ')}`, 'WARN');
       }
 
       if (check.ok) {
+        // 5. adım: editör geçişi. Düşük puan gelirse bir kez daha yazdırılır.
+        const critique = await this.critiqueScript(lastScript, research);
+        if (critique && critique.score < CRITIQUE_MIN_SCORE && attempt < MAX_REGEN) {
+          lastProblems = critique.issues.length
+            ? critique.issues
+            : [`editör puanı ${critique.score}/10`];
+          log(
+            'ScriptAgent',
+            `Editör puanı düşük (${critique.score}/10); senaryo yeniden yazılıyor.`,
+            'WARN'
+          );
+          attempt += 1;
+          feedback = [critique.hint, ...critique.issues.slice(0, 3)].filter(Boolean).join('; ');
+          continue;
+        }
+
         log(
           'ScriptAgent',
           `Senaryo hazır: ${scenes.length} sahne, ${countWords(lastScript.narration)} kelime, ` +
@@ -592,6 +721,59 @@ export class ScriptAgent {
       this.buildScript(this.prepareScenes(cleaned, topicObj.topic), outline),
       topicObj
     );
+  }
+
+  /**
+   * 5. adım: render öncesi editör geçişi.
+   * Soyut kelime, tekrar, kaynak uyumu ve hook kalitesini puanlar.
+   * Model yoksa/başarısızsa null döner; akış durmaz.
+   * @returns {Promise<{score:number, issues:string[], hint:string}|null>}
+   */
+  async critiqueScript(script, research = null) {
+    if (process.env.SCRIPT_CRITIQUE === '0') return null;
+    const scenes = (script.scenes || []).map((scene, i) =>
+      `${i + 1}. ${scene.narration}` +
+      (scene.visualObjects?.length ? ` [nesneler: ${scene.visualObjects.join(', ')}]` : '')
+    ).join('\n');
+    const facts = research?.facts?.length
+      ? research.facts.map((fact) => `- ${fact}`).join('\n')
+      : '(kaynak yok)';
+
+    try {
+      const raw = await this.call([
+        'Aşağıdaki Türkçe Shorts senaryosunu editör olarak denetle.',
+        '',
+        'Senaryo:',
+        scenes,
+        '',
+        'Doğrulanmış kaynak bilgiler:',
+        facts,
+        '',
+        'Şu kusurları ara:',
+        '1) Soyut/dolgu kelime (gizemli, ilginç, harika, inanılmaz, şaşırtıcı, muhteşem).',
+        '2) Aynı fikrin tekrarı, birbirine benzeyen cümleler.',
+        '3) Kaynakta olmayan bilgi (uydurma).',
+        '4) İlk cümlenin zayıf hook olması (merak uyandırmıyor).',
+        '5) Çizilemeyecek cümle (içinde hiç nesne/yer/kişi geçmiyor).',
+        '',
+        'Yalnızca JSON döndür:',
+        '{"score": 8, "issues": ["1. cümlede \"ilginç\" soyut kelimesi var"],',
+        ' "hint": "yeniden yazarken dikkat edilecek tek cümlelik not"}'
+      ].join('\n'), { temperature: 0.2, numPredict: 500, label: 'kritik' });
+
+      const score = Number(raw?.score);
+      const issues = Array.isArray(raw?.issues)
+        ? raw.issues.map((item) => cleanText(item)).filter(Boolean).slice(0, 6)
+        : [];
+      const hint = cleanText(raw?.hint);
+      if (Number.isFinite(score)) {
+        log('ScriptAgent', `Editör puanı: ${score}/10${issues.length ? ` (${issues.length} sorun)` : ''}.`);
+      }
+      return Number.isFinite(score) ? { score, issues, hint } : null;
+    } catch (err) {
+      log('ScriptAgent', `Editör geçişi atlandı: ${err.message}`, 'WARN');
+      return null;
+    }
   }
 
   finalizeScript(script, topicObj) {
