@@ -99,6 +99,15 @@ async function main() {
           `⏱️  Seslendirme: ${data.seconds.toFixed(0)} sn ` +
           `(${data.audioSeconds ? `${data.audioSeconds.toFixed(1)} sn ses` : 'ses süresi okunamadı'})`
         );
+      } else if (step === 'quality') {
+        const q = data.quality;
+        if (!q) {
+          console.log('🔍 Kalite: kontrol çalıştırılamadı (ffprobe?).');
+        } else if (q.passed) {
+          console.log(`🔍 Kalite: tüm kontroller geçti (${q.duration.toFixed(1)}s).`);
+        } else {
+          console.log(`🔍 Kalite uyarıları: ${q.errors.join(' | ')}`);
+        }
       } else if (step === 'video') {
         console.log(`🖼️  ${data.image.statusLine()}`);
       }

@@ -568,7 +568,7 @@ Yalnızca şu JSON biçimini döndür:
     return outPath;
   }
 
-  async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null) {
+  async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null, wordsPath = null) {
     const python = await this.resolvePython();
     log2('Kareler çiziliyor (Pillow)...');
     const args = [RENDER_SCRIPT, '--manifest', manifestPath, '--out', framesDir,
@@ -576,6 +576,7 @@ Yalnızca şu JSON biçimini döndür:
       '--format', FRAME_FORMAT];
     if (srtPath) args.push('--srt', srtPath);
     if (sheetPath) args.push('--sheet', sheetPath);
+    if (wordsPath) args.push('--words', wordsPath);
     const { stdout } = await execFileAsync(python, args, { maxBuffer: 8 * 1024 * 1024 });
     if (stdout.trim()) log2(stdout.trim());
   }
@@ -614,6 +615,26 @@ Yalnızca şu JSON biçimini döndür:
     }
   }
 
+  /**
+   * Arka plan müziği dosyasını bulur.
+   * Sıra: MUSIC_PATH env → src/whiteboard/assets/music/ içindeki ilk ses dosyası.
+   * Dosya yoksa null döner (müzik opsiyonel, video yine üretilir).
+   */
+  async resolveMusic() {
+    if (process.env.MUSIC_VOLUME === '0' || process.env.MUSIC_PATH === '') return null;
+    const explicit = process.env.MUSIC_PATH;
+    if (explicit) {
+      const exists = await fs.stat(explicit).then(() => true).catch(() => false);
+      if (exists) return explicit;
+      log2(`Müzik dosyası bulunamadı: ${explicit}`, 'WARN');
+      return null;
+    }
+    const dir = path.join(WHITEBOARD_DIR, 'assets', 'music');
+    const files = await fs.readdir(dir).catch(() => []);
+    const hit = files.find((file) => /\.(mp3|m4a|wav|ogg)$/i.test(file));
+    return hit ? path.join(dir, hit) : null;
+  }
+
   async encodeVideo({ framesDir, audioPath, outPath, frameCount, ext = FRAME_FORMAT }) {
     const { ffmpeg } = await resolveBinaries();
     const args = [
@@ -622,6 +643,12 @@ Yalnızca şu JSON biçimini döndür:
       '-i', path.join(framesDir, `frame_%05d.${ext}`)
     ];
     if (audioPath) args.push('-i', audioPath);
+
+    const musicPath = audioPath ? await this.resolveMusic() : null;
+    if (musicPath) {
+      // Müziği video boyunca döngüye al
+      args.push('-stream_loop', '-1', '-i', musicPath);
+    }
 
     args.push(
       '-frames:v', String(frameCount),
@@ -632,9 +659,27 @@ Yalnızca şu JSON biçimini döndür:
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart'
     );
-    if (audioPath) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
-    args.push(outPath);
 
+    if (musicPath) {
+      // Ses kanalını ikiye ayır: biri çıkışa, diğeri müziği kısmak için (sidechain).
+      const volume = Number(process.env.MUSIC_VOLUME ?? 0.16);
+      const fade = Number(process.env.MUSIC_FADE_OUT ?? 0.8);
+      // Girdi 0 kareler (ses yok), 1 = anlatım sesi, 2 = müzik
+      const filter = [
+        '[1:a]asplit=2[voice][sc]',
+        `[2:a]volume=${volume},afade=t=in:st=0:d=0.6[music]`,
+        '[music][sc]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=320[duck]',
+        '[voice][duck]amix=inputs=2:duration=first:dropout_transition=0,' +
+          `afade=t=out:st=${Math.max(0, frameCount / FPS - fade)}:d=${fade}[a]`
+      ].join(';');
+      args.push('-filter_complex', filter, '-map', '0:v', '-map', '[a]',
+        '-c:a', 'aac', '-b:a', '192k', '-shortest');
+      log2(`Arka plan müziği eklendi (${path.basename(musicPath)}, ses ${(volume * 100).toFixed(0)}%).`);
+    } else if (audioPath) {
+      args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+    }
+
+    args.push(outPath);
     await execFileAsync(ffmpeg, args, { maxBuffer: 16 * 1024 * 1024 });
   }
 
@@ -764,8 +809,15 @@ Yalnızca şu JSON biçimini döndür:
         .join(' → ')
     );
 
+    // Karaoke altyazı: TTS kelime zamanları JSON olarak render'a verilir
+    let wordsPath = null;
+    if (Array.isArray(words) && words.length) {
+      wordsPath = path.join(workDir, 'voice_words.json');
+      await fs.writeFile(wordsPath, JSON.stringify({ words }, null, 2), 'utf8');
+    }
+
     const sheetPath = path.join(workDir, 'preview.jpg');
-    await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath);
+    await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath, wordsPath);
     const frames = (await fs.readdir(framesDir))
       .filter((f) => f.endsWith(`.${FRAME_FORMAT}`))
       .sort();

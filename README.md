@@ -214,7 +214,9 @@ Videolar stok klip yerine **beyaz kâğıt üzerine keçeli kalemle çizim** ola
 üretilir: dikey 1080x1920, beyaz zemin, siyah marker çizgileri, seçici renk
 dolguları (bal sarısı, süt mavisi, ekmek kahvesi) ve sağ alttan giren gerçek
 bir el. Altyazılar ekranın altında koyu yarı saydam kutuda beyaz kalın yazıyla
-gösterilir.
+gösterilir; **konuşulan kelime sarı bantla (`#F2B705`) vurgulanır** (karaoke).
+Kelime zamanları TTS'ten gelir, cümleyle eşleşmeyen altyazı parçası otomatik
+olarak düz beyaz altyazıya döner (`SUBTITLE_KARAOKE=0` ile tümüyle kapatılır).
 
 Akış:
 
@@ -234,7 +236,10 @@ Akış:
    kalemin havada gezinmesi, kâğıt grain/lif dokusu ve vinyet, yarı saydam
    bantlı renk dolguları. El sahne başında kadraja girer, kalemi takip eder
    ve sahne sonunda kareyi terk eder. Altyazılar da karelere gömülür.
-4. `ffmpeg` kareleri ses ile birleştirip zaman damgalı
+4. `ffmpeg` kareleri sesle birleştirir. `assets/music/` içinde parça varsa
+   (veya `MUSIC_PATH` verilmişse) müzik düşük seste döngüye alınır ve
+   **konuşma sırasında otomatik kısılır** (sidechain ducking), sonda fade-out
+   yapar. Zaman damgalı
    `shorts_whiteboard_YYYYMMDD-HHMMSS.mp4` dosyasını üretir; her çalıştırma
    kendi klasörüne yazar (`preview.jpg`, `run_info.json`, `frames/`).
 
@@ -263,6 +268,7 @@ node src/scripts/whiteboardDemo.js --text "Bal neden bozulmaz? ..." \
 ```
 
 Ses dosyası verilmezse video sessiz üretilir; altyazılar yine gömülür.
+Müzik yalnızca konuşma sesi varken eklenir (sessiz videoya müzik bindirilmez).
 1080x1920, 30 fps bir videonun kare üretimi ortalama bir dizüstünde
 ~1-1.5 dakika sürer.
 
@@ -378,7 +384,7 @@ tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 | Konu seçimi (Ollama) | 20-45 sn |
 | Senaryo (Ollama, 3-4 istek) | 90-180 sn |
 | Seslendirme (edge-tts) | 5-10 sn |
-| Kare çizimi + kodlama | 60-120 sn |
+| Kare çizimi + kodlama | 60-120 sn (`RENDER_WORKERS=4` ile ~yarısı) |
 | Görsel üretimi (Imagen, 14 sahne) | 90-240 sn |
 | Vision doğrulama (+onarımlar) | 30-90 sn |
 
@@ -388,6 +394,10 @@ Hız için:
 - `OLLAMA_KEEP_ALIVE=1h` modelin bellekte kalmasını sağlar (ilk yükleme 10-30 sn).
 - Ek Ollama incelemesi varsayılan olarak **kapalı**; `--review` ile açılır (her tur ~1 dk ekler).
 - Kareler varsayılan olarak **JPEG** yazılır (`FRAME_FORMAT=jpg`). PNG yaklaşık 4 kat yavaştır.
+- `RENDER_WORKERS=4` kareleri sahne sınırlarından böler ve paralel çizer; çıktı
+  birebir aynıdır (deterministik tohum), 4 çekirdekte ~2 kat hız. Sorun çıkarsa
+  otomatik olarak seri çizime döner.
+- Karaoke altyazı ek maliyet getirmez (kelime zamanları zaten TTS'ten geliyor).
 - `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
 
 ## Ses sorunları
@@ -422,13 +432,18 @@ Ağ yoksa veya madde bulunamazsa uyarı yazıp normal üretime devam eder
 
 ## Kontroller
 
-Projede ayrı bir test paketi yok; hızlı doğrulama için:
-
 ```bash
+npm test                                          # node:test paketi (18 test)
 node --check src/agents/WhiteboardVideoAgent.js   # sözdizimi
-node --check src/scripts/autoVideo.js
 npm run whiteboard-demo                           # uçtan uca duman testi (sessiz video)
 ```
+
+Video üretildikten sonra hat **kendi kendini denetler** (`QualityAgent`): dosya
+boyutu, çözünürlük (1080x1920), ses kanalı, ses-görüntü senkronu, 25-55 sn süre
+bandı, 1.5 sn'den uzun siyah ekran ve sessiz ses. CLI'da bu kontroller uyarı
+olarak basılır, bot akışında hata sayılır (yayına çıkmaz). Çizim sırasında da
+her sahnenin mürekkep yoğunluğu ölçülür; neredeyse boş kalan sahne
+`UYARI: sahne N ... neredeyse boş` satırıyla bildirilir.
 
 `npm run whiteboard-demo` 30-45 saniyelik sessiz bir video üretir; süre, sahne
 zinciri ve çıktı dosyası konsolda raporlanır. `run_info.json` içindeki

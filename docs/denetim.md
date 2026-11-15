@@ -159,3 +159,32 @@ kapakta başlık sarı bantta okunur.
 
 Bu üçüne cevap verirsen sıradaki turu ona göre planlarım: 1 numaralı iyileştirme
 (görsel sağlayıcı) + kapak karesi + upscale'i tek turda bitirebiliriz.
+
+## 8. Bu turda uygulananlar ("her şeyi yap", bütçe yok)
+
+Önceki turun açık listesi tek turda kapatıldı. Hepsi **ücretsiz ve anahtarsız**
+varsayılanla çalışır.
+
+| İş | Durum | Nerede |
+|---|---|---|
+| Karaoke altyazı (konuşulan kelime sarı vurgulu) | **eklendi** | `subtitles.py`: `attach_word_timings()` + `SubtitleRenderer(words=...)`; eşleşme oranı <0.6 olan cümle otomatik düz altyazıya döner, `SUBTITLE_KARAOKE=0` kapatır |
+| Kelime zamanlarının render'a taşınması | **eklendi** | `WhiteboardVideoAgent` → `voice_words.json` → `renderFrames(..., wordsPath)` → `render.py --words` |
+| Arka plan müziği + otomatik kısma (ducking) | **eklendi** | `WhiteboardVideoAgent.encodeVideo()`: `sidechaincompress` ile konuşurken müzik ~%84 kısılır, giriş/çıkış fade'i; `MUSIC_PATH` / `assets/music/` / `MUSIC_VOLUME` |
+| Ücretsiz varsayılan müzik | **eklendi** | `src/whiteboard/assets/music/paper_plucks.mp3` (12 s, kendi üretimimiz, telifsiz, 142 KB) |
+| Paralel kare çizimi | **eklendi** | `render.py`: `RENDER_WORKERS` / `--workers`, sahne sınırlarından bölme, tohumlar sahne numarasına bağlı → çıktı aynı; hata olursa seri çizime döner |
+| Trend adaylarını puanlama + zayıf konuyu reddetme | **eklendi** | `TrendAgent.scoreTopic()` (somutluk/soru/sayı + ceza: soyut, magazin, aşırı uzun); adaylar puana göre sıralanıp modele öyle verilir |
+| Süre kontrolünün 30-45 sn'ye çekilmesi | **düzeltildi** | `QualityAgent`: eski 35-62 sn bandı 25-55 sn'ye, uyarı bandı 28-48 sn'ye alındı; altyazı parça sayısı kontrolü eklendi |
+
+Doğrulama: `npm test` **18/18** (4 yeni trend puanlama testi). Sahte ses ajanıyla
+uçtan uca çalıştırıldı: 12 sahne / 29.9 s / 898 kare, `cover.jpg` üretildi, müzik
+logda `paper_plucks.mp3, ses 16%` olarak göründü, çıktı videosunda tek AAC ses
+akışı (konuşma + müzik karışımı) var. Karelerden alınan altyazı bandında aktif
+kelimenin sarı bant + koyu yazıyla vurgulandığı gözle doğrulandı.
+Paralel render testi (6 sahne, 360 kare): seri 4.07 s → 3 işçi 3.32 s (başlatma
+dahil); seri/paralel kareler arasındaki en büyük fark 3/255 (JPEG yuvarlaması,
+gözle ayırt edilemez).
+
+Kalan (bilinçli olarak yapılmadı): A/B stil denemeleri (tek stil oturdu, veri
+toplamadan bölmek riskli) ve `scenes.py` kataloğunun emekliye ayrılması (anahtarsız
+yedek yol olarak değerli). `ScriptAgent` / `WhiteboardVideoAgent` dosya bölünmesi
+de davranış değiştirmediği için ertelendi.

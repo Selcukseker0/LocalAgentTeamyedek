@@ -16,6 +16,7 @@ import { ReviewerAgent } from '../agents/ReviewerAgent.js';
 import { ScriptAgent, countWords, splitSentences, estimateSeconds } from '../agents/ScriptAgent.js';
 import { VoiceAgent } from '../agents/VoiceAgent.js';
 import { WhiteboardVideoAgent } from '../agents/WhiteboardVideoAgent.js';
+import { QualityAgent } from '../agents/QualityAgent.js';
 import { getAudioDuration } from '../utils/ffmpeg.js';
 
 export function stamp(date = new Date()) {
@@ -168,6 +169,24 @@ export async function generateShort({
   timings.video = (Date.now() - videoStart) / 1000;
   onStep({ step: 'video', data: { result, seconds: timings.video, image: video.image } });
 
+  // 4b) Kalite kontrol (bot akışıyla aynı kontroller; CLI'da ölümcül değil)
+  let quality = null;
+  if (process.env.QUALITY_CHECK !== '0') {
+    try {
+      quality = await new QualityAgent().inspect(
+        result.videoPath,
+        voiceResult.srtPath,
+        result.duration ?? seconds
+      );
+    } catch (err) {
+      log('Pipeline', `Kalite kontrolü çalıştırılamadı: ${err.message}`, 'WARN');
+    }
+    if (quality && !quality.passed) {
+      log('Pipeline', `Kalite uyarıları: ${quality.errors.join(' | ')}`, 'WARN');
+    }
+    onStep({ step: 'quality', data: { quality } });
+  }
+
   // 5) YouTube künyesi
   let metadataPath = null;
   if (writeMetadata) {
@@ -186,6 +205,7 @@ export async function generateShort({
     voice: voiceResult,
     audioSeconds: seconds,
     video: result,
+    quality,
     metadataPath,
     timings
   };
