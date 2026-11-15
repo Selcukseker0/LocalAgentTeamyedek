@@ -16,6 +16,9 @@ const RENDER_SCRIPT = path.join(WHITEBOARD_DIR, 'render.py');
 
 const FPS = 30;
 const WIDTH = 1080;
+// Kare biçimi: jpg (varsayılan, hızlı) veya png (kayıpsız ama ~4 kat yavaş).
+// Windows'ta sorun görülürse .env içinde FRAME_FORMAT=png yapılabilir.
+const FRAME_FORMAT = process.env.FRAME_FORMAT === 'png' ? 'png' : 'jpg';
 const HEIGHT = 1920;
 
 // Sahne kimliği -> Ollama'ya verilecek kısa açıklama
@@ -309,7 +312,8 @@ Yalnızca şu JSON biçimini döndür:
     const python = await this.resolvePython();
     log2('Kareler çiziliyor (Pillow)...');
     const args = [RENDER_SCRIPT, '--manifest', manifestPath, '--out', framesDir,
-      '--fps', String(FPS), '--size', `${WIDTH}x${HEIGHT}`];
+      '--fps', String(FPS), '--size', `${WIDTH}x${HEIGHT}`,
+      '--format', FRAME_FORMAT];
     if (srtPath) args.push('--srt', srtPath);
     if (sheetPath) args.push('--sheet', sheetPath);
     const { stdout } = await execFileAsync(python, args, { maxBuffer: 8 * 1024 * 1024 });
@@ -339,20 +343,21 @@ Yalnızca şu JSON biçimini döndür:
     return infoPath;
   }
 
-  async encodeVideo({ framesDir, audioPath, outPath, frameCount }) {
+  async encodeVideo({ framesDir, audioPath, outPath, frameCount, ext = FRAME_FORMAT }) {
     const { ffmpeg } = await resolveBinaries();
     const args = [
       '-y',
       '-framerate', String(FPS),
-      '-i', path.join(framesDir, 'frame_%05d.png')
+      '-i', path.join(framesDir, `frame_%05d.${ext}`)
     ];
     if (audioPath) args.push('-i', audioPath);
 
     args.push(
       '-frames:v', String(frameCount),
       '-c:v', 'libx264',
-      '-preset', 'medium',
-      '-crf', '20',
+      '-preset', 'veryfast',
+      '-crf', '19',
+      '-threads', '0',
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart'
     );
@@ -454,7 +459,9 @@ Yalnızca şu JSON biçimini döndür:
 
     const sheetPath = path.join(workDir, 'preview.jpg');
     await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath);
-    const frames = (await fs.readdir(framesDir)).filter((f) => f.endsWith('.png'));
+    const frames = (await fs.readdir(framesDir))
+      .filter((f) => f.endsWith(`.${FRAME_FORMAT}`))
+      .sort();
     if (frames.length === 0) throw new Error('Hiç kare üretilmedi.');
 
     const finalPath = path.join(workDir, fileName);
@@ -462,7 +469,8 @@ Yalnızca şu JSON biçimini döndür:
       framesDir,
       audioPath: hasAudio ? audioPath : null,
       outPath: finalPath,
-      frameCount: frames.length
+      frameCount: frames.length,
+      ext: FRAME_FORMAT
     });
 
     const finalDuration = frames.length / FPS;

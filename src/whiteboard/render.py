@@ -410,7 +410,7 @@ def make_sheet(frame_paths, out_path, thumb_w=432):
 
 
 def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None,
-           sheet_path=None):
+           sheet_path=None, frame_format="jpg"):
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
@@ -442,8 +442,15 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
             frame = renderer.frame(t)
             if subs:
                 subs.draw(frame, elapsed + t)
-            out_file = os.path.join(out_dir, f"frame_{frame_idx:05d}.png")
-            frame.convert("RGB").save(out_file)
+            out_file = os.path.join(out_dir, f"frame_{frame_idx:05d}.{frame_format}")
+            rgb = frame.convert("RGB")
+            if frame_format == "png":
+                # PNG kodlaması kare çiziminden pahalı; hız için düşük sıkıştırma
+                rgb.save(out_file, compress_level=1)
+            else:
+                # JPEG q=95 4:4:4: çizgi sanatı için görsel olarak kayıpsıza yakın,
+                # PNG'den ~7 kat hızlı (45 sn video için ~2-3 dakika kazanç)
+                rgb.save(out_file, quality=95, subsampling=0)
             written.append(out_file)
             frame_idx += 1
 
@@ -465,6 +472,8 @@ def main():
     ap.add_argument("--srt", default=None, help="Altyazı dosyası (karelere gömülür)")
     ap.add_argument("--no-hand", action="store_true", help="El sprite'ını kapat")
     ap.add_argument("--sheet", default=None, help="Önizleme görseli (4 kare) yolu")
+    ap.add_argument("--format", default="jpg", choices=["jpg", "png"],
+                    help="Kare biçimi (varsayılan jpg: hızlı, png: kayıpsız/yavaş)")
     ap.add_argument("--list-scenes", action="store_true",
                     help="Kullanılabilir sahne kimliklerini JSON olarak yaz")
     args = ap.parse_args()
@@ -477,7 +486,8 @@ def main():
 
     w, h = args.size.lower().split("x")
     render(args.manifest, args.out, args.fps, int(w), int(h),
-           with_hand=not args.no_hand, srt_path=args.srt, sheet_path=args.sheet)
+           with_hand=not args.no_hand, srt_path=args.srt, sheet_path=args.sheet,
+           frame_format=args.format)
 
 
 if __name__ == "__main__":

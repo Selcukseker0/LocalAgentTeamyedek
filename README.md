@@ -199,6 +199,25 @@ Render sırasında elden üç açı/ölçek varyantı üretilir ve kol kadraj d�
 taşacak şekilde uzatılır; her sahne farklı varyantı kullanır. Böylece aynı el
 tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 
+## Hız
+
+45 saniyelik bir videonun tipik süreleri (4 çekirdek CPU, GPU yok):
+
+| Adım | Süre |
+| --- | --- |
+| Konu seçimi (Ollama) | 20-45 sn |
+| Senaryo (Ollama, 1-2 istek) | 30-90 sn |
+| Seslendirme (edge-tts) | 5-10 sn |
+| Kare çizimi + kodlama | 60-120 sn |
+
+Hız için:
+
+- `OLLAMA_NUM_GPU` **boş** bırakılmalı; `0` yazmak modeli CPU'ya kilitler.
+- `OLLAMA_KEEP_ALIVE=1h` modelin bellekte kalmasını sağlar (ilk yükleme 10-30 sn).
+- Ek Ollama incelemesi varsayılan olarak **kapalı**; `--review` ile açılır (her tur ~1 dk ekler).
+- Kareler varsayılan olarak **JPEG** yazılır (`FRAME_FORMAT=jpg`). PNG yaklaşık 4 kat yavaştır.
+- `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
+
 ## Kontroller
 
 Projede ayrı bir test paketi yok; hızlı doğrulama için:

@@ -1,7 +1,13 @@
 import { config } from '../config.js';
 
-// Uzun senaryolar (130+ kelime + JSON alanları) 512 token'a sığmıyordu.
-const DEFAULT_NUM_PREDICT = Number(process.env.OLLAMA_NUM_PREDICT || 1200);
+// Uzun senaryolar (130+ kelime + JSON alanları) 512 token'a sığmıyordu;
+// 900 token 130-140 kelimelik senaryo için yeterli ve daha hızlı.
+const DEFAULT_NUM_PREDICT = Number(process.env.OLLAMA_NUM_PREDICT || 900);
+// num_gpu tanımlı değilse Ollama kendi karar verir (GPU varsa GPU kullanır).
+// Önceden sabit `num_gpu: 0` CPU'ya kilitliyordu ve yavaşlığın ana sebebiydi.
+const NUM_GPU = process.env.OLLAMA_NUM_GPU;
+// Modeli bellekte tut: her istekte 4.7 GB modelin yeniden yüklenmesini önler.
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
 
 export async function askOllama({
   system,
@@ -10,14 +16,19 @@ export async function askOllama({
   temperature = 0.7,
   numPredict = DEFAULT_NUM_PREDICT
 }) {
+  const options = {
+    temperature,
+    num_predict: numPredict
+  };
+  if (NUM_GPU !== undefined && NUM_GPU !== '') {
+    options.num_gpu = Number(NUM_GPU);
+  }
+
   const body = {
     model: config.ollamaModel,
     stream: false,
-    options: {
-      temperature,
-      num_gpu: 0,
-      num_predict: numPredict
-    },
+    keep_alive: KEEP_ALIVE,
+    options,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: prompt }

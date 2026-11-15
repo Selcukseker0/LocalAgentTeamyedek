@@ -5,7 +5,7 @@
  * Kullanım:
  *   node src/scripts/autoVideo.js
  *   node src/scripts/autoVideo.js --topic "Buz neden kaygandır?"   # konuyu sen seç
- *   node src/scripts/autoVideo.js --no-review                      # inceleme adımını atla
+ *   node src/scripts/autoVideo.js --review                         # ek Ollama incelemesi (yavaş)
  *   node src/scripts/autoVideo.js --text "Metin..."                # senaryoyu Ollama'ya yazdırma
  *
  * Gereksinimler: Ollama (senaryo/trend), edge-tts (ses), Pillow + ffmpeg (video).
@@ -95,10 +95,15 @@ async function main() {
       `${sentences.length} cümle (~${estimateSeconds(scriptObj.narration).toFixed(0)} sn)\n`
     );
   } else {
+    const t0 = Date.now();
     scriptObj = await scriptAgent.generateScript(topicObj);
+    console.log(`⏱️  Senaryo: ${((Date.now() - t0) / 1000).toFixed(0)} sn`);
   }
 
-  if (!manualText && !hasFlag('no-review')) {
+  // Ek Ollama incelemesi varsayılan olarak kapalı: her tur ~1 dakika ekliyor.
+  // (Senaryo zaten kelime/cümle/kalıp kontrollerinden geçiyor.)
+  if (!manualText && hasFlag('review')) {
+    const t0 = Date.now();
     let review = await reviewer.reviewScript(scriptObj);
     if (!review.approved) {
       log('autoVideo', `Reviewer revize istedi: ${review.feedback}`);
@@ -108,10 +113,13 @@ async function main() {
         log('autoVideo', `Senaryo onaylanmadı, yine de devam ediliyor: ${review.feedback}`, 'WARN');
       }
     }
+    console.log(`⏱️  İnceleme: ${((Date.now() - t0) / 1000).toFixed(0)} sn`);
   }
 
   // 3) Ses
+  const voiceStarted = Date.now();
   const { audioPath, srtPath } = await voice.synthesize(scriptObj.narration, workDir);
+  console.log(`⏱️  Seslendirme: ${((Date.now() - voiceStarted) / 1000).toFixed(0)} sn`);
 
   // 4) Video
   const fileName = `shorts_whiteboard_${ts}.mp4`;

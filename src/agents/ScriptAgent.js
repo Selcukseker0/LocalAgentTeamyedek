@@ -169,7 +169,8 @@ function buildPrompt(topicObj, { feedback = '', previous = null, strict = false 
 }
 
 export class ScriptAgent {
-  async requestScript(prompt, temperature = 0.8, numPredict = 1200) {
+  async requestScript(prompt, temperature = 0.8, numPredict = 900) {
+    const startedAt = Date.now();
     const raw = await askOllama({
       system: SYSTEM_PROMPT,
       prompt,
@@ -177,7 +178,10 @@ export class ScriptAgent {
       temperature,
       numPredict
     });
-    return normalizeScript(raw || {});
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const script = normalizeScript(raw || {});
+    log('ScriptAgent', `Ollama yanıtı ${seconds}s (${countWords(script.narration)} kelime).`);
+    return script;
   }
 
   async generateScript(topicObj, feedback = '') {
@@ -190,7 +194,7 @@ export class ScriptAgent {
     attempts += 1;
     wordCount = countWords(script.narration);
 
-    // 2) kısa çıktı: mevcut metni genişlet
+    // 2) kısa çıktı: mevcut metni genişlet (tek ek deneme: hız için)
     if (wordCount < MIN_WORDS) {
       log(
         'ScriptAgent',
@@ -198,17 +202,10 @@ export class ScriptAgent {
         'WARN'
       );
       script = await this.requestScript(
-        buildPrompt(topicObj, { feedback, previous: script }),
+        buildPrompt(topicObj, { feedback, previous: script, strict: true }),
         0.9,
-        1600
+        1100
       );
-      attempts += 1;
-      wordCount = countWords(script.narration);
-    }
-
-    // 3) hâlâ kısa: katı yapı ile son deneme
-    if (wordCount < MIN_WORDS) {
-      script = await this.requestScript(buildPrompt(topicObj, { feedback, strict: true }), 1.0, 1800);
       attempts += 1;
       wordCount = countWords(script.narration);
     }
@@ -226,7 +223,7 @@ export class ScriptAgent {
 
     let sentences = splitSentences(script.narration);
 
-    if (wordCount > MAX_WORDS) {
+    if (wordCount > MAX_WORDS + 20) {
       // Uzun çıktıyı kesmek yerine kısaltma isteği gönder
       log('ScriptAgent', `Senaryo uzun (${wordCount} kelime); kısaltılıyor.`, 'WARN');
       script = await this.requestScript(
