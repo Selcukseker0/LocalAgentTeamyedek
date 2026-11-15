@@ -9,6 +9,7 @@
     "whiteboard-demo": "node src/scripts/whiteboardDemo.js",
     "auto-video": "node src/scripts/autoVideo.js",
     "env:init": "node src/scripts/initEnv.js",
+    "doctor": "node src/scripts/doctor.js",
     "test": "node --test"
   },
   "dependencies": {

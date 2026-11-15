@@ -13,7 +13,12 @@ import argparse
 import os
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
+try:
+    from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
+except ImportError:  # pragma: no cover - kullanıcıya anlaşılır mesaj
+    raise SystemExit(
+        "Pillow kurulu değil. Kurulum: python -m pip install -r requirements.txt"
+    ) from None
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ink import make_paper  # noqa: E402

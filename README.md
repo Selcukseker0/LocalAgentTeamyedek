@@ -8,16 +8,65 @@ Ollama üzerinde yerel çalışan, **Node.js (ESM) + Python (Pillow)** ile yazı
 
 - Node.js 20 veya üzeri
 - npm
+- Python 3.10+ (`Pillow`, `edge-tts`, `imageio-ffmpeg` — `requirements.txt`)
 - Ollama
 - Ollama üzerinde `qwen2.5:7b` veya yapılandırdığınız başka bir sohbet modeli
+- ffmpeg (yoksa `imageio-ffmpeg` paketi kendi ikilisini getirir)
 
 ## Kurulum
 
 ```bash
 npm install
+python -m pip install -r requirements.txt
 npm run env:init     # .env dosyasını .env.example'dan oluşturur (varsa üzerine yazmaz)
 ollama pull qwen2.5:7b
+npm run doctor       # her şey yerinde mi? (aşağıya bak)
 ```
+
+### Ortam kontrolü: `npm run doctor`
+
+Kurulumdan sonra tek komut tüm zinciri denetler ve eksik olan için **tam
+komutu** yazar:
+
+```
+✅ Git deposu: bu klasör bir klon
+✅ Node.js: v22.22.3
+✅ npm paketleri: node_modules var
+✅ .env dosyası: var
+✅ Python: Python 3.12.1
+✅ Python paketleri: tamam (Pillow 13.0.0)
+✅ ffmpeg: C:\...\imageio_ffmpeg\binaries\ffmpeg-win-x86_64.exe
+✅ Ollama: çalışıyor, qwen2.5:7b bulundu
+```
+
+Kırmızı satır varsa yanındaki `→` komutunu çalıştır, sonra `npm run doctor`
+tekrar et. (Bot/YouTube için `.env` gerekir; yalnızca video üretiyorsan boş
+kalması sorun değil.)
+
+### Windows (PowerShell) — sıfırdan
+
+```powershell
+git clone https://github.com/Selcukseker0/LocalAgentTeamyedek.git
+cd LocalAgentTeamyedek
+npm.cmd install
+python -m pip install -r requirements.txt
+npm.cmd run env:init
+ollama pull qwen2.5:7b
+npm.cmd run doctor    # eksik varsa tam komutunu yazar
+npm.cmd test          # 18 testin hepsi geçmeli
+```
+
+Klasörün **git deposu** olması şart: `git pull` yaparken `fatal: not a git
+repository` hatası alıyorsan yanlış klasördesin (ZIP olarak indirilmiş eski bir
+kopya) ya da `.git` klasörü silinmiş. Çözüm: doğru klasöre geç (`cd
+C:\Users\<kullanıcı>\Desktop\LocalAgentTeamyedek-git`) veya yukarıdaki gibi
+yeniden klonla. Güncellemek için `git pull` yeterlidir; ZIP kopyasında `git pull`
+çalışmaz, yeni ZIP indirmen gerekir.
+
+`pip` "normal site-packages is not writeable" derse bu bir hata değildir; pip
+paketleri kullanıcı klasörüne kurar. Hâlâ "No module named PIL" alırsan
+`python --version` ve `python -m pip --version` çıktısına bak, ardından
+`python -m pip install --user -r requirements.txt` dene.
 
 `.env` depoya **dahil değildir** (`.gitignore` içinde); her klonda bir kez
 `npm run env:init` ile oluşturulur. Boş bırakılan alanların listesini de yazar.
@@ -434,6 +483,7 @@ Ağ yoksa veya madde bulunamazsa uyarı yazıp normal üretime devam eder
 
 ```bash
 npm test                                          # node:test paketi (18 test)
+npm run doctor                                    # ortam/kurulum kontrolü
 node --check src/agents/WhiteboardVideoAgent.js   # sözdizimi
 npm run whiteboard-demo                           # uçtan uca duman testi (sessiz video)
 ```

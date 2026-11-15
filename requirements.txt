@@ -1,0 +1,13 @@
+# Python tarafı bağımlılıkları (beyaz tahta çizimi, ses, kapak)
+# Kurulum:  python -m pip install -r requirements.txt
+# (Windows'ta "normal site-packages is not writeable" uyarısı zararsızdır,
+#  pip otomatik olarak kullanıcı klasörüne kurar.)
+
+# Kare çizimi, altyazı, kapak (zorunlu)
+Pillow>=10.0.0
+
+# ffmpeg ikilisi PATH'te yoksa indirir (zorunlu değil, kolaylık)
+imageio-ffmpeg>=0.4.9
+
+# Türkçe seslendirme (zorunlu: ses olmadan video sessiz kalır)
+edge-tts>=6.1.9
