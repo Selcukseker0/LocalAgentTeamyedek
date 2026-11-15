@@ -1168,9 +1168,11 @@ def _fit_scene(strokes, box=DRAW_BOX, max_scale=1.45):
     def transform(pt):
         return (cx_dst + (pt[0] - cx_src) * scale, cy_dst + (pt[1] - cy_src) * scale)
 
+    # Çizgi kalınlığı ölçekle birlikte artsın: büyük nesnede ince çizgi kayboluyordu.
+    width_scale = max(0.9, min(1.8, scale))
     out = []
     for pts, color, width in strokes:
-        out.append(([transform(pt) for pt in pts], color, width))
+        out.append(([transform(pt) for pt in pts], color, width * width_scale))
     return out
 
 
@@ -1200,8 +1202,12 @@ def compose(objects, box=DRAW_BOX):
             continue
         cx = float(obj.get("x", 0.5))
         cy = float(obj.get("y", 0.5))
-        size = float(obj.get("size", 0.55))
-        size = max(0.22, min(0.95, size))
+        size = float(obj.get("size", 0.66))
+        # Küçük nesneler sayfayı boş bırakıyordu: alt sınır 0.40.
+        size = max(0.40, min(0.98, size))
+        # Kenara yapışmasın
+        cx = max(0.16, min(0.84, cx))
+        cy = max(0.18, min(0.82, cy))
         box_w = (box[2] - box[0]) * size
         box_h = (box[3] - box[1]) * size
         center_x = box[0] + (box[2] - box[0]) * max(0.0, min(1.0, cx))

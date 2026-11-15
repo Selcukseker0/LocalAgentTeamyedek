@@ -130,13 +130,32 @@ tutarsa kal; hacim artarsa fal'a geç (20 kat ucuz, aynı kod).
 içinde LANCZOS ile 1.5-2× büyütüp hafif `unsharp` uygulamak çizgileri belirginleştirir
 (maliyet: sahne başına ~20 ms). İstersen bunu bu turda ekleyebilirim.
 
-## 6. Karar bekleyen 3 şey
+## 6. Bu turda uygulananlar (görsel cila + ücretsiz sağlayıcı)
 
-1. **Bot akışı kalsın mı?** (Telegram onayı + otomatik YouTube yükleme) — kalırsa yukarıdaki
-   sadeleştirme yapılmayacak; çıkarsa ~350 satır ve 3 bağımlılık düşer.
-2. **Görsel sağlayıcı hangisi?** Gemini/Imagen (kolay, ücretli), fal/Flux (çok ucuz),
-   yerel Flux (ücretsiz, GPU ister).
-3. **Bütçe**: video başına ~$0.4-0.7 kabul mü? Değilse fal (~$0.05) veya yerel yol.
+Kararların: bot akışı **kalıyor**, bütçe **yok**, odak **görsel cila**. Buna göre:
+
+| İş | Durum | Nerede |
+|---|---|---|
+| Ücretsiz görsel sağlayıcı (`IMAGE_PROVIDER=pollinations`) | **eklendi** | `ImageAgent.pollinationsImage()` — anahtarsız, Flux tabanlı, `IMAGE_REQUEST_DELAY_MS` ile oran sınırına saygı |
+| Kontur keskinleştirme | **eklendi** | `render.py`: resize sonrası `UnsharpMask`, `IMAGE_SHARPEN` (0-2) |
+| Kontur kalınlaştırma (marker hissi) | **eklendi** | `render.py`: `_thicken_line_layer()` `MaxFilter`, `IMAGE_LINE_BOOST` (0-2) |
+| Sabit palet + kalın çizgi promptu | **eklendi** | `ImageAgent.DEFAULT_STYLE`: sarı `#F2B705`, mavi `#3F7FBF`, turuncu `#E07B39`, "uniform thick marker outlines, no thin hatching" |
+| YouTube kapak karesi | **eklendi** | `src/whiteboard/cover.py` + `WhiteboardVideoAgent.makeCover()` → `cover.jpg` (1080x1920) |
+| Yedek (anahtarsız) yolda sayfa doluluğu | **eklendi** | `scenes.py`: `compose` nesne boyutu alt sınırı 0.34→0.40, varsayılan 0.62→0.66, kenar clamp 0.16-0.84 |
+| Ölçekle birlikte çizgi kalınlığı | **eklendi** | `scenes.py`: `_fit_scene` `width_scale = 0.9-1.8` |
+| Planlayıcı promptunda boyut aralığı | **güncellendi** | `planCompositions`: `size` 0.45-0.75 («sayfa boş kalmasın») |
+
+Doğrulama: `npm test` 14/14; paylaşılan hat sahte Pollinations yanıtıyla uçtan uca
+çalıştırıldı (12 sahne, 30 görsel isteği, `cover.jpg` üretildi, 29.9 s video).
+Kareler ve kapak gözle kontrol edildi: çizgiler v5'e göre belirgin kalın,
+kapakta başlık sarı bantta okunur.
+
+## 7. Karar bekleyen 3 şey
+
+1. ~~Bot akışı kalsın mı?~~ → **kalıyor** (pipeline'a bağlı, kalitesi CLI ile aynı).
+2. ~~Görsel sağlayıcı hangisi?~~ → **şimdilik ücretsiz yol**: `pollinations`. Kalite yetmezse
+   fal (~$0.05/video) veya yerel Flux; kod ikisine de hazır (`custom` sağlayıcı).
+3. **Sıradaki iş**: kapak/altyazı/müzik cilası mı, yoksa hız + sağlamlık mı?
 
 Bu üçüne cevap verirsen sıradaki turu ona göre planlarım: 1 numaralı iyileştirme
 (görsel sağlayıcı) + kapak karesi + upscale'i tek turda bitirebiliriz.

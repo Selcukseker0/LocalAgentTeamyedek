@@ -138,7 +138,8 @@ node src/scripts/autoVideo.js --review
 ```
 
 Çıktı: `output/auto/<zaman damgası>-<konu>/shorts_whiteboard_<zaman damgası>.mp4`,
-yanında `preview.jpg`, `run_info.json` ve `youtube_metadata.json`.
+yanında `preview.jpg` (4 karelik önizleme), `cover.jpg` (YouTube kapağı),
+`run_info.json` ve `youtube_metadata.json`.
 
 ## Çizilebilir senaryo + görsel doğrulama
 
@@ -172,11 +173,16 @@ Vision anahtarı yoksa doğrulama atlanır, üretim devam eder.
 Her cümle için **ayrı illüstrasyon** üretilebilir. Açmak için `.env`:
 
 ```env
-IMAGE_PROVIDER=gemini            # openai | gemini | custom
+IMAGE_PROVIDER=gemini            # openai | gemini | custom | pollinations
 IMAGE_MODEL=imagen-3.0-generate-002
 GEMINI_API_KEY=...
 # openai: IMAGE_PROVIDER=openai, IMAGE_MODEL=gpt-image-1, OPENAI_API_KEY=...
+# ÜCRETSİZ, anahtar yok: IMAGE_PROVIDER=pollinations / IMAGE_MODEL=flux
 ```
+
+**Para vermeden denemek:** `IMAGE_PROVIDER=pollinations` — anahtar gerekmez,
+Flux tabanlı ücretsiz servis (oran sınırlı; istekler arası bekleme `IMAGE_REQUEST_DELAY_MS`).
+Kalite/maliyet dengesi için `docs/denetim.md` içindeki sağlayıcı tablosuna bakın.
 
 - Stil prompt'u sabittir: *hand-drawn black marker line art, whiteboard doodle
   style, centered composition, pure white background, simple flat marker
@@ -189,6 +195,10 @@ GEMINI_API_KEY=...
   yerleşik çizim kompozisyonu kullanılır. Yani sistem ücretsiz de çalışır.
 - `IMAGE_PROVIDER=custom` + `IMAGE_API_URL` ile kendi ucuz API'niz bağlanır
   (`POST {prompt}` → `{"image":"<base64>"}` veya `{"url":"..."}`).
+- **Görsel cila (render):** `IMAGE_SHARPEN=1` konturu keskinleştirir,
+  `IMAGE_LINE_BOOST=1` kalınlaştırır (küçük görsellerde çizgi kaybolmasın).
+- **Kapak karesi:** video bittiğinde `cover.jpg` üretilir (1080x1920, sarı bantta
+  büyük başlık + çizim). `WHITEBOARD_COVER=0` ile kapatılır.
 
 Render tarafında her illüstrasyon **çiziliyormuş gibi** açılır:
 

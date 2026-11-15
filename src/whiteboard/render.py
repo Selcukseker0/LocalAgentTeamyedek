@@ -253,6 +253,27 @@ def split_line_and_color(img):
     return line, color
 
 
+# Görsel cila ayarları (env ile kapatılabilir)
+SHARPEN = float(os.environ.get("IMAGE_SHARPEN", "1") or 0)      # 0 = kapalı, 1-2 arası
+LINE_BOOST = int(float(os.environ.get("IMAGE_LINE_BOOST", "1") or 0))  # 0 = kapalı, 1-2
+
+
+def _thicken_line_layer(layer, strength=1):
+    """Kontur katmanının alfasını genişletir (MaxFilter): çizgi kalınlaşır.
+
+    Küçük görsellerde 1 px'lik çizgiler videoda kayboluyordu; bu adım onları
+    marker kalınlığına getirir. Renk katmanına dokunulmaz.
+    """
+    if layer is None:
+        return layer
+    alpha = layer.getchannel("A")
+    for _ in range(max(1, int(strength))):
+        alpha = alpha.filter(ImageFilter.MaxFilter(3))
+    out = layer.copy()
+    out.putalpha(alpha)
+    return out
+
+
 class ImageSceneRenderer:
     """Hazır bir illüstrasyonu maske ile çizip sonra renklerini boyar.
 
@@ -289,8 +310,15 @@ class ImageSceneRenderer:
         size = (max(1, int(source.width * ratio)), max(1, int(source.height * ratio)))
         resized = source.resize(size, Image.LANCZOS)
 
+        # Görsel cila: küçültmede yumuşayan çizgileri geri keskinleştir,
+        # konturu kalınlaştır (videoda "keçeli kalem" hissi daha güçlü olur).
+        if SHARPEN:
+            resized = resized.filter(ImageFilter.UnsharpMask(radius=1.6, percent=int(115 * SHARPEN), threshold=3))
+
         self.size = size
         self.line_layer, self.color_layer = split_line_and_color(resized)
+        if LINE_BOOST:
+            self.line_layer = _thicken_line_layer(self.line_layer, LINE_BOOST)
         self.pos = ((width - size[0]) // 2, int(top_limit + (avail_h - size[1]) / 2))
         self.line_end = self.duration * self.LINE_PHASE
         self.color_end = self.line_end + self.duration * self.COLOR_PHASE

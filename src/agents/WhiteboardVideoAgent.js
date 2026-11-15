@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WHITEBOARD_DIR = path.resolve(HERE, '../whiteboard');
 const RENDER_SCRIPT = path.join(WHITEBOARD_DIR, 'render.py');
+const COVER_SCRIPT = path.join(WHITEBOARD_DIR, 'cover.py');
 
 const FPS = 30;
 const WIDTH = 1080;
@@ -315,7 +316,7 @@ Cümlede anlatılan OLAYI göster: kim/ne, ne yapıyor. Tek kelimeye bakıp nesn
 Aynı nesneyi her cümlede tekrarlama; komşu sahneler birbirinden farklı olsun.
 Boş sahne yok: her cümlede en az bir nesne olacak.
 Yerleşim: x ve y 0-1 arası (0.5 = sayfanın ortası), size nesnenin alanın ne kadarını
-kapladığı (0.25-0.6). Ana nesne büyük, ayrıntılar küçük olsun.
+kapladığı (0.45-0.75). Ana nesne büyük olsun, sayfa boş kalmasın; ayrıntılar 0.45.
 
 Katalog:
 ${catalog}
@@ -522,6 +523,50 @@ Yalnızca şu JSON biçimini döndür:
   }
 
   // -------------------------------------------------------------- görüntü
+
+  /**
+   * Kapak karesi üretir (1080x1920 jpg).
+   * Kaynak: ilk sahnenin üretilmiş görseli varsa o, yoksa videodan alınan kare.
+   */
+  async makeCover({ workDir, videoPath, title = '', subtitle = '' }) {
+    if (process.env.WHITEBOARD_COVER === '0') return null;
+    const python = await this.resolvePython();
+
+    let framePath = null;
+    for (const candidate of ['scene_01.png', 'scene_02.png', 'scene_03.png']) {
+      const full = path.join(workDir, 'images', candidate);
+      const exists = await fs.stat(full).then(() => true).catch(() => false);
+      if (exists) {
+        framePath = full;
+        break;
+      }
+    }
+
+    if (!framePath) {
+      // Görsel yok: videodan temsili bir kare çek
+      const { ffmpeg } = await resolveBinaries();
+      framePath = path.join(workDir, 'cover_source.png');
+      await execFileAsync(ffmpeg, [
+        '-y', '-ss', '1.5', '-i', videoPath, '-frames:v', '1', framePath
+      ]);
+    }
+
+    const outPath = path.join(workDir, 'cover.jpg');
+    const cleanTitle = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 42);
+    const cleanSubtitle = String(subtitle || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+
+    await execFileAsync(python, [
+      COVER_SCRIPT,
+      '--frame', framePath,
+      '--title', cleanTitle,
+      '--subtitle', cleanSubtitle,
+      '--out', outPath,
+      '--size', `${WIDTH}x${HEIGHT}`
+    ]);
+
+    log2(`Kapak: ${outPath}`);
+    return outPath;
+  }
 
   async renderFrames(manifestPath, framesDir, srtPath = null, sheetPath = null) {
     const python = await this.resolvePython();
@@ -769,11 +814,26 @@ Yalnızca şu JSON biçimini döndür:
     });
     log2(`Shorts hazır: ${finalPath} (${finalDuration.toFixed(1)}s, ${frames.length} kare)`);
     log2(`Çalıştırma bilgisi: ${runInfo}`);
+
+    // YouTube kapak karesi (thumbnail): çizim + büyük başlık
+    let coverPath = null;
+    try {
+      coverPath = await this.makeCover({
+        workDir,
+        videoPath: finalPath,
+        title: manifest.scenes[0]?.label || topic || '',
+        subtitle: manifest.scenes[0]?.text || ''
+      });
+    } catch (err) {
+      log2(`Kapak üretilemedi (video yine hazır): ${err.message}`, 'WARN');
+    }
+
     return {
       videoPath: finalPath,
       duration: finalDuration,
       frameCount: frames.length,
       previewPath: sheetPath,
+      coverPath,
       scenes: manifest.scenes.map((sc) => sc.id)
     };
   }

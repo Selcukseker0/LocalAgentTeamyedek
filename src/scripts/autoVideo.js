@@ -118,6 +118,7 @@ async function main() {
   const usedImages = (runInfo.scene_plan || []).filter((plan) => plan.image).length;
   console.log(`   Üretilmiş görsel: ${usedImages}/${(runInfo.scene_plan || []).length} sahne`);
   console.log(`   Kelime: ${countWords(script.narration)} | Önizleme: ${video.previewPath}`);
+  if (video.coverPath) console.log(`   Kapak: ${video.coverPath}`);
   if (metadataPath) console.log(`   Künye: ${metadataPath}`);
   console.log(`   Toplam süre: ${((Date.now() - started) / 1000).toFixed(0)} sn`);
 
