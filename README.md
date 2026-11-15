@@ -449,6 +449,27 @@ Hız için:
 - Karaoke altyazı ek maliyet getirmez (kelime zamanları zaten TTS'ten geliyor).
 - `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
 
+## Senaryo üretilemedi / yanlış konu (sık görülen)
+
+Bu hatalar artık büyük ölçüde otomatik çözülüyor, ama belirtileri bilmek işe yarar:
+
+- **`Konu Türkçe/kısa değil, reddedildi`** → model İngilizce ya da çok uzun başlık
+  döndürdü; otomatik yeniden denenir. Sürekli oluyorsa `OLLAMA_MODEL=qwen2.5:14b`.
+- **`Konuyla ilgili madde yok; en yakın sonuç "..." yeterince alakalı değil`** →
+  Wikipedia araması konuyla örtüşmeyen bir madde buldu (ör. "Buzun sırrı ne?"
+  sorusunun "Mehmed Selim **Sırrı** Paşa"ya gitmesi) ve araştırma atlandı.
+  Bu bilinçli: yanlış maddeden bilgi yazmak, hiç yazmamaktan kötü. Senaryo
+  modelin kendi bilgisiyle yazılır. Eşiği `RESEARCH_MIN_MATCH` ile ayarlayabilirsin.
+- **`... uzun cümle ikiye bölündü` / `... kısa cümle komşusuna eklendi`** →
+  7b modeli 20-30 kelimelik cümleler yazıyor; cümleler artık **atılmıyor**,
+  virgül/bağlaç sınırından bölünüyor. Eskiden bu yüzden senaryo boşalıyordu.
+- **`Senaryo bütçesi doldu`** → `SCRIPT_BUDGET_SEC` (varsayılan 10 dk) aşıldı.
+  Akış durmaz; eldeki taslak `SCRIPT_FALLBACK_SCENES`/`SCRIPT_FALLBACK_WORDS`
+  eşiğini geçiyorsa video üretilir (biraz kısa olabilir).
+- **`kaynakta olmayan sayı`** → 100 ve üzeri sayılar (yıl, nüfus, ölçü) kaynakta
+  yoksa senaryo reddedilir. 0-99 arası sayılar serbest (`GROUNDING_MIN_NUMBER`).
+  `3.000` ile `3000` aynı sayı sayılır.
+
 ## Ses sorunları
 
 Video üretildikten sonra konsolda iki satırdan birini görürsünüz:
