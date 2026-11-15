@@ -43,6 +43,11 @@ seçer; aynı senaryo ikinci kez üretilmez:
 4. Ses `edge-tts` ile üretilir, video gerçek ses süresine göre karelenir;
    yani süre tahmini değil, ölçülen ses süresi esastır.
 
+Senaryo, modele "cümle dizisi" olarak yazdırılır (`sentences: [{text, scene}]`):
+12-16 cümle, her cümle 9-11 kelime. Model kısa yazarsa senaryo iki kez daha
+genişletilir; 109 kelimenin altında kalırsa açık hata verilir (bozuk video
+üretilmez). Uzun çıktı ise kısaltılır.
+
 Hız kalibrasyonu: `tr-TR-AhmetNeural --rate=+20%` yaklaşık **saniyede 2.9
 kelime** okuyor. Farklı ses/hız kullanırsanız `.env` içinde
 `TTS_WORDS_PER_SECOND` değerini güncelleyin (örn. `2.6`).

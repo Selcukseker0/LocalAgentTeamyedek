@@ -1,13 +1,22 @@
 import { config } from '../config.js';
 
-export async function askOllama({ system, prompt, json = false, temperature = 0.7 }) {
+// Uzun senaryolar (130+ kelime + JSON alanları) 512 token'a sığmıyordu.
+const DEFAULT_NUM_PREDICT = Number(process.env.OLLAMA_NUM_PREDICT || 1200);
+
+export async function askOllama({
+  system,
+  prompt,
+  json = false,
+  temperature = 0.7,
+  numPredict = DEFAULT_NUM_PREDICT
+}) {
   const body = {
     model: config.ollamaModel,
     stream: false,
     options: {
       temperature,
       num_gpu: 0,
-      num_predict: 512
+      num_predict: numPredict
     },
     messages: [
       { role: 'system', content: system },

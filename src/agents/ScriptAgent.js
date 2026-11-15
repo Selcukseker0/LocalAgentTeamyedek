@@ -6,35 +6,28 @@ import { log } from '../logger.js';
 const WPS = Number(process.env.TTS_WORDS_PER_SECOND || 2.9);
 const TARGET_MIN_SEC = 45;
 const TARGET_MAX_SEC = 50;
-const HARD_MIN_SEC = 40;
-const HARD_MAX_SEC = 56;
 
 const MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 0.97);   // ~127
 const MAX_WORDS = Math.round(TARGET_MAX_SEC * WPS * 1.03);   // ~149
-const MIN_SENTENCES = 10;
-const MAX_SENTENCES = 15;
+// Kesin hedefe ulaşılamazsa bu sınırın üstündeki senaryo yine kabul edilir
+// (kullanıcı boş çıktı yerine kısa bir video görsün).
+const ACCEPT_MIN_WORDS = Math.round(MIN_WORDS * 0.86);       // ~109
+const MIN_SENTENCES = 12;
+const MAX_SENTENCES = 16;
+const MIN_ACCEPT_SENTENCES = 9;
+const WORDS_PER_SENTENCE = '9-11';
 
-function cleanScript(script) {
-  if (typeof script.title === 'string') {
-    script.title = script.title.replace(/#shorts/gi, '').trim();
-  }
+const SYSTEM_PROMPT =
+  'Sen Türkçe YouTube Shorts senaryosu yazan bir editörsün. ' +
+  'Yalnızca istenen JSON nesnesini döndür. Uydurma kelime, başka dil veya açıklama ekleme.';
 
-  if (typeof script.narration === 'string') {
-    script.narration = script.narration
-      .replace(/\s+/g, ' ')
-      .replace(/\.{3,}/g, '.')
-      .replace(/\!{2,}/g, '!')
-      .replace(/\?{2,}/g, '?')
-      .trim();
-  }
-
-  if (Array.isArray(script.sceneHints)) {
-    script.sceneHints = script.sceneHints
-      .map((hint) => String(hint || '').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-  }
-
-  return script;
+function cleanText(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/\.{3,}/g, '.')
+    .replace(/!{2,}/g, '!')
+    .replace(/\?{2,}/g, '?')
+    .trim();
 }
 
 export function countWords(text) {
@@ -59,11 +52,8 @@ export function splitLongSentences(sentences, limit = 14) {
       continue;
     }
     const parts = sentence.split(/(?<=,)\s+/);
-    if (parts.length > 1) {
-      out.push(...splitLongSentences(parts, limit));
-    } else {
-      out.push(sentence.trim());
-    }
+    if (parts.length > 1) out.push(...splitLongSentences(parts, limit));
+    else out.push(sentence.trim());
   }
   return out.filter(Boolean);
 }
@@ -72,75 +62,206 @@ export function estimateSeconds(narration) {
   return countWords(narration) / WPS;
 }
 
-function durationOk(narration) {
-  const seconds = estimateSeconds(narration);
-  return seconds >= HARD_MIN_SEC && seconds <= HARD_MAX_SEC;
+/**
+ * Ollama yanıtını {title, description, tags, narration, sceneHints} biçimine çevirir.
+ * Model hem `sentences` dizisi (tercih edilen) hem de düz `narration` döndürebilir.
+ */
+export function normalizeScript(raw) {
+  const script = {
+    title: cleanText(raw.title).replace(/#shorts/gi, '').trim(),
+    description: cleanText(raw.description),
+    tags: Array.isArray(raw.tags) ? raw.tags.map(cleanText).filter(Boolean) : [],
+    narration: '',
+    sceneHints: null,
+    visualQueries: []
+  };
+
+  if (Array.isArray(raw.sentences) && raw.sentences.length) {
+    const items = raw.sentences
+      .map((item) => (typeof item === 'string' ? { text: item } : item || {}))
+      .map((item) => ({
+        text: cleanText(item.text),
+        scene: cleanText(item.scene)
+      }))
+      .filter((item) => item.text)
+      // Cümle sonu noktalama yoksa ekle: birleştirince sınırlar kaybolmasın
+      .map((item) => ({
+        ...item,
+        text: /[.!?…]$/.test(item.text) ? item.text : `${item.text}.`
+      }));
+
+    script.narration = items.map((item) => item.text).join(' ');
+
+    // Her öğe birden fazla cümleye bölünürse sahne ipucu cümle sayısıyla eşlenir
+    if (items.length && items.every((item) => item.scene)) {
+      script.sceneHints = items.flatMap((item) =>
+        splitSentences(item.text).map(() => item.scene)
+      );
+    }
+  } else if (typeof raw.narration === 'string') {
+    script.narration = cleanText(raw.narration);
+    if (Array.isArray(raw.sceneHints)) {
+      const hints = raw.sceneHints.map(cleanText);
+      script.sceneHints = hints.length === splitSentences(script.narration).length ? hints : null;
+    }
+  }
+
+  if (Array.isArray(raw.visualQueries) && raw.visualQueries.length === 4) {
+    script.visualQueries = raw.visualQueries.map(cleanText);
+  }
+
+  return script;
 }
 
-function buildPrompt(topicObj, feedback = '') {
-  return `Bir Türkçe YouTube Shorts senaryosu hazırla. Video 45-50 saniye sürecek.
+function buildPrompt(topicObj, { feedback = '', previous = null, strict = false } = {}) {
+  const lines = [
+    'Türkçe bir YouTube Shorts senaryosu hazırla. Video 45-50 saniye sürecek.',
+    '',
+    `Konu: "${topicObj.topic}" (Kategori: ${topicObj.category})`,
+    ''
+  ];
 
-Konu: "${topicObj.topic}" (Kategori: ${topicObj.category})
-${feedback ? `Önceki inceleme notu: ${feedback}` : ''}
+  if (feedback) {
+    lines.push(`Önceki inceleme notu: ${feedback}`, '');
+  }
+  if (previous) {
+    lines.push(
+      `Önceki denemede ${countWords(previous.narration)} kelime çıktı; bu çok kısa.`,
+      'Senaryoyu genişlet: aynı konuya 5-7 yeni cümle ekle, mevcut cümleleri de koru.',
+      `Önceki metin: ${previous.narration}`,
+      ''
+    );
+  }
 
-Kurallar:
-- narration yalnızca doğal, gündelik Türkçe olsun; ${MIN_WORDS}-${MAX_WORDS} kelime, ${MIN_SENTENCES}-${MAX_SENTENCES} kısa cümle yaz.
-- Her cümle en fazla 12 kelime olsun.
-- Yapı: ilk cümle güçlü bir kanca olsun. Sonra 3 somut bilgi/madde anlat (her biri 2-3 cümle). Son cümle kısa bir soru olsun.
-- Emin olmadığın bilgiyi, özel terimi, sayıyı veya iddiayı uydurma; emin değilsen çıkar.
-- Anlamsız kelime, başka dil veya sahne notu kullanma.
-- sceneHints: her cümle için, o cümlede beyaz tahtaya çizilecek somut bir nesne/kavram yaz. Cümle sayısıyla birebir aynı sayıda olmalı. Örnekler: "vazo", "süt kutusu", "bakteri", "saat", "güneş", "telefon", "grafik", "kalkan", "alev", "bulut", "alışveriş çantası", "soru işareti", "kalp", "para", "ev", "kitap", "arı", "fabrika".
-- Başlığa #shorts ekleme.
+  lines.push(
+    'Yapı:',
+    `1) "sentences" dizisinde ${MIN_SENTENCES}-${MAX_SENTENCES} cümle olsun.`,
+    `2) Her cümle ${WORDS_PER_SENTENCE} kelime (9'dan kısa, 12'den uzun olmasın).`,
+    `3) Toplam ${MIN_WORDS}-${MAX_WORDS} kelime olacak; ${MIN_SENTENCES} cümleden az yazma.`,
+    '4) İlk cümle güçlü bir kanca olsun ("... hiç düşündün mü?", şaşırtıcı bir sayı vb.).',
+    '5) Ortada üç somut bilgi anlat (her biri 2-3 cümle).',
+    '6) Son cümle izleyiciye kısa bir soru olsun.',
+    '7) Her cümle için "scene" alanına beyaz tahtaya çizilecek somut bir nesne yaz:',
+    '   "vazo", "süt kutusu", "kahve fincanı", "güneş", "gökyüzü", "gezegen",',
+    '   "bakteri", "saat", "para", "grafik", "kalkan", "alev", "bulut", "arı",',
+    '   "kitap", "ev", "telefon", "soru işareti", "kalp", "klavye", "kutu".',
+    '8) Emin olmadığın bilgiyi, sayıyı veya iddiayı yazma; dili gündelik Türkçe tut.',
+    '9) Başlığa #shorts ekleme; title en fazla 70 karakter olsun.',
+    ''
+  );
 
-Yalnızca şu JSON biçimini döndür:
-{"title":"...", "description":"...", "tags":["..."], "narration":"...", "sceneHints":["...","..."], "visualQueries":["...","...","...","..."]}`;
+  if (strict) {
+    lines.push(
+      `SADECE ${MIN_SENTENCES + 2} cümle yaz ve her cümleyi tam 10 kelimeye tamamla. ` +
+      'Kısa yazmak yasak; eksik cümle bırakma.',
+      ''
+    );
+  }
+
+  lines.push(
+    'Yalnızca şu JSON biçimini döndür:',
+    '{"title":"...","description":"...","tags":["...","..."],' +
+      '"sentences":[{"text":"...","scene":"..."},{"text":"...","scene":"..."}],' +
+      '"visualQueries":["...","...","...","..."]}'
+  );
+
+  return lines.join('\n');
 }
 
 export class ScriptAgent {
-  async requestScript(prompt, system, temperature = 0.2) {
-    return cleanScript(await askOllama({ system, prompt, json: true, temperature }));
+  async requestScript(prompt, temperature = 0.8, numPredict = 1200) {
+    const raw = await askOllama({
+      system: SYSTEM_PROMPT,
+      prompt,
+      json: true,
+      temperature,
+      numPredict
+    });
+    return normalizeScript(raw || {});
   }
 
   async generateScript(topicObj, feedback = '') {
-    const system =
-      'Sen Türkçe yazan, doğal ve açık anlatımlı bir Shorts senaristisin. ' +
-      'Uydurma kelime kullanma; yalnızca istenen JSON nesnesini döndür.';
+    let script = null;
+    let wordCount = 0;
+    let attempts = 0;
 
-    let script = await this.requestScript(buildPrompt(topicObj, feedback), system);
-    let wordCount = countWords(script.narration);
+    // 1) normal istek
+    script = await this.requestScript(buildPrompt(topicObj, { feedback }));
+    attempts += 1;
+    wordCount = countWords(script.narration);
 
-    if (wordCount < MIN_WORDS || wordCount > MAX_WORDS || !durationOk(script.narration)) {
-      const seconds = estimateSeconds(script.narration).toFixed(1);
-      script = await this.requestScript(
-        `Önceki JSON senaryo hedefe uymadı: ${wordCount} kelime, tahmini ${seconds} saniye.
-Hedef: ${TARGET_MIN_SEC}-${TARGET_MAX_SEC} saniye, yani ${MIN_WORDS}-${MAX_WORDS} kelime ve ${MIN_SENTENCES}-${MAX_SENTENCES} cümle.
-Önceki JSON: ${JSON.stringify({ ...script, sceneHints: undefined })}
-
-Senaryoyu baştan yaz; eksik metne devam etme. Aynı alanları koru, sceneHints cümle sayısıyla eşit olsun.
-Yalnızca doğru JSON nesnesini döndür.`,
-        system,
-        0.1
+    // 2) kısa çıktı: mevcut metni genişlet
+    if (wordCount < MIN_WORDS) {
+      log(
+        'ScriptAgent',
+        `Senaryo kısa (${wordCount} kelime); genişletme isteği gönderiliyor.`,
+        'WARN'
       );
+      script = await this.requestScript(
+        buildPrompt(topicObj, { feedback, previous: script }),
+        0.9,
+        1600
+      );
+      attempts += 1;
       wordCount = countWords(script.narration);
     }
 
-    if (wordCount < MIN_WORDS || wordCount > MAX_WORDS) {
+    // 3) hâlâ kısa: katı yapı ile son deneme
+    if (wordCount < MIN_WORDS) {
+      script = await this.requestScript(buildPrompt(topicObj, { feedback, strict: true }), 1.0, 1800);
+      attempts += 1;
+      wordCount = countWords(script.narration);
+    }
+
+    if (!script.narration) {
+      throw new Error('Ollama boş senaryo döndürdü. Tekrar deneyin.');
+    }
+
+    const notTurkish =
+      /\b(the|and|with|that|this|from|was|were|they|people|which)\b/i.test(script.narration) &&
+      !/[ğüşıöç]/i.test(script.narration);
+    if (notTurkish) {
+      throw new Error('Ollama Türkçe yerine İngilizce senaryo döndürdü. OLLAMA_MODEL değerini kontrol edin.');
+    }
+
+    let sentences = splitSentences(script.narration);
+
+    if (wordCount > MAX_WORDS) {
+      // Uzun çıktıyı kesmek yerine kısaltma isteği gönder
+      log('ScriptAgent', `Senaryo uzun (${wordCount} kelime); kısaltılıyor.`, 'WARN');
+      script = await this.requestScript(
+        `${buildPrompt(topicObj, { feedback })}\n\nÖnceki metin ${wordCount} kelimeydi, çok uzun. ` +
+        `Aynı konuyu ${MIN_WORDS}-${MAX_WORDS} kelimeye indirerek yeniden yaz.`,
+        0.4,
+        1400
+      );
+      wordCount = countWords(script.narration);
+      sentences = splitSentences(script.narration);
+      attempts += 1;
+    }
+
+    if (sentences.length < MIN_ACCEPT_SENTENCES) {
       throw new Error(
-        `Ollama senaryosu ${MIN_WORDS}-${MAX_WORDS} kelime olmalı; ${wordCount} kelime üretildi.`
+        `Senaryo çok az cümle içeriyor (${sentences.length}). ` +
+        `${MIN_SENTENCES}+ cümle gerekiyor; tekrar deneyin.`
       );
     }
 
-    const scriptText = `${script.title || ''} ${script.narration || ''}`;
-    if (!/^[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}\s]*$/u.test(scriptText)) {
-      throw new Error('Ollama senaryosu Türkçe dışı karakterler içeriyor; senaryo reddedildi.');
+    if (wordCount < ACCEPT_MIN_WORDS) {
+      throw new Error(
+        `Ollama senaryosu çok kısa kaldı: ${wordCount} kelime ` +
+        `(hedef ${MIN_WORDS}-${MAX_WORDS}, ${attempts} deneme). ` +
+        'Daha büyük bir model deneyin: OLLAMA_MODEL=qwen2.5:7b veya 14b.'
+      );
     }
 
-    const sentences = splitSentences(script.narration);
-    if (sentences.length < 6) {
-      throw new Error(`Senaryo çok az cümle içeriyor (${sentences.length}); en az 6 bekleniyordu.`);
-    }
-    if (sentences.length < MIN_SENTENCES) {
-      log('ScriptAgent', `Cümle sayısı hedefin altında: ${sentences.length} (hedef ${MIN_SENTENCES}+)`, 'WARN');
+    if (wordCount < MIN_WORDS) {
+      log(
+        'ScriptAgent',
+        `Senaryo hedefin biraz altında (${wordCount}/${MIN_WORDS} kelime, ` +
+        `~${estimateSeconds(script.narration).toFixed(0)} sn); devam ediliyor.`,
+        'WARN'
+      );
     }
 
     // sceneHints cümle sayısıyla eşleşmiyorsa sahne planı otomatik yapılır
@@ -148,14 +269,14 @@ Yalnızca doğru JSON nesnesini döndür.`,
       script.sceneHints = null;
     }
 
+    if (!script.title) script.title = cleanText(topicObj.topic);
     if (!Array.isArray(script.visualQueries) || script.visualQueries.length !== 4) {
       script.visualQueries = [];
     }
-
     log(
       'ScriptAgent',
       `Senaryo: "${script.title}" (${wordCount} kelime, ${sentences.length} cümle, ` +
-      `~${estimateSeconds(script.narration).toFixed(0)} sn) [Ollama]`
+      `~${estimateSeconds(script.narration).toFixed(0)} sn, ${attempts} deneme) [Ollama]`
     );
     return script;
   }
@@ -165,6 +286,7 @@ export const SCRIPT_TARGET = {
   wordsPerSecond: WPS,
   minWords: MIN_WORDS,
   maxWords: MAX_WORDS,
+  acceptMinWords: ACCEPT_MIN_WORDS,
   targetMinSeconds: TARGET_MIN_SEC,
   targetMaxSeconds: TARGET_MAX_SEC,
   minSentences: MIN_SENTENCES,
