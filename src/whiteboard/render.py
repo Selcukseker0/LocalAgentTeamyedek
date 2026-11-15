@@ -34,7 +34,7 @@ from ink import (  # noqa: E402
     path_length,
     truncate,
 )
-from scenes import SCENES, get_scene, pick_scene_for_text  # noqa: E402
+from scenes import SCENES, compose, get_scene, pick_scene_for_text  # noqa: E402
 from subtitles import SubtitleRenderer, parse_srt, find_font  # noqa: E402
 
 DRAW_FRACTION = 0.88     # çizim, sahne süresinin bu kadarında tamamlanır
@@ -210,7 +210,7 @@ def _ease_in_out(t):
 class SceneRenderer:
     """Bir sahnenin kare kare çizimini yönetir."""
 
-    def __init__(self, scene_id, duration, fps, width, height, hand, seed=0):
+    def __init__(self, scene_id, duration, fps, width, height, hand, seed=0, objects=None):
         self.width = width
         self.height = height
         self.fps = fps
@@ -220,7 +220,9 @@ class SceneRenderer:
         self.scale_y = height / 1920.0
         self.hand = hand
 
-        raw = get_scene(scene_id)
+        # Kompozisyon verilmişse sahne nesnelerden kurulur (cümlenin anlamına göre)
+        composed = compose(objects) if objects else []
+        raw = composed if composed else get_scene(scene_id)
         self.paper = make_paper(width, height, seed=13 + seed * 7).convert("RGBA")
 
         rnd = random.Random(seed * 31 + 5)
@@ -479,7 +481,8 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
         scene_id = scene.get("id") or pick_scene_for_text(scene.get("text", ""))
         duration = float(scene.get("duration", 3.0))
         hand = hand_variants[scene_no % len(hand_variants)] if hand_variants else None
-        renderer = SceneRenderer(scene_id, duration, fps, width, height, hand, seed=scene_no)
+        renderer = SceneRenderer(scene_id, duration, fps, width, height, hand,
+                                 seed=scene_no, objects=scene.get("objects"))
 
         label = scene.get("label") or ""
         label_layer = board_label(label, width, height) if label else None

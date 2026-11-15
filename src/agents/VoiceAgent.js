@@ -2,10 +2,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { log } from '../logger.js';
 
 const execFileAsync = promisify(execFile);
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const TIMING_SCRIPT = path.resolve(HERE, '../whiteboard/tts_timing.py');
 
 function vttToSrt(vttContent) {
   const lines = vttContent.replace(/\r\n/g, '\n').split('\n');
@@ -30,14 +34,27 @@ function vttToSrt(vttContent) {
 }
 
 export class VoiceAgent {
+  /**
+   * edge-tts ile seslendirir.
+   *
+   * Önce Python kütüphanesi üzerinden kelime zaman damgaları alınır
+   * (altyazı ve sahne geçişleri gerçek zamana oturur). Bu yol çalışmazsa
+   * eski CLI yoluna düşülür: ses üretilir, altyazı edge-tts'in kendi VTT'sinden gelir.
+   */
   async synthesize(narration, workDir) {
     const audioPath = path.join(workDir, 'voice.mp3');
     const vttPath = path.join(workDir, 'subs.vtt');
     const srtPath = path.join(workDir, 'subs.srt');
+    const wordsPath = path.join(workDir, 'words.json');
+    const textPath = path.join(workDir, 'narration.txt');
 
     const cleanText = narration.replace(/\s+/g, ' ').trim();
+    await fs.writeFile(textPath, cleanText, 'utf8');
 
-    // edge-tts komutu yerine "python -m edge_tts" kullanılır (PATH sorununu önler)
+    const timing = await this.synthesizeWithTimings(cleanText, { audioPath, wordsPath, srtPath });
+    if (timing) return timing;
+
+    // --- yedek yol: CLI (kelime zamanı yok) ---
     try {
       await execFileAsync(config.pythonBin, [
         '-m', 'edge_tts',
@@ -62,12 +79,57 @@ export class VoiceAgent {
         'edge-tts çıktı vermediyse internet bağlantısını kontrol edin.'
       );
     }
-    log('VoiceAgent', `Ses dosyası: ${(audioStat.size / 1024).toFixed(0)} KB`);
+    log('VoiceAgent', `Ses dosyası: ${(audioStat.size / 1024).toFixed(0)} KB (kelime zamanı yok)`);
 
     const vtt = await fs.readFile(vttPath, 'utf8');
     await fs.writeFile(srtPath, vttToSrt(vtt), 'utf8');
-
     log('VoiceAgent', `Ses ve altyazı üretildi: ${audioPath}`);
-    return { audioPath, srtPath };
+
+    return { audioPath, srtPath, wordsPath: null, cues: [] };
+  }
+
+  /** Python kütüphanesi ile kelime zaman damgalı seslendirme. */
+  async synthesizeWithTimings(cleanText, { audioPath, wordsPath, srtPath }) {
+    try {
+      const { stdout } = await execFileAsync(config.pythonBin, [
+        TIMING_SCRIPT,
+        '--text-file', path.join(path.dirname(audioPath), 'narration.txt'),
+        '--voice', config.ttsVoice,
+        '--rate=+20%',
+        '--media', audioPath,
+        '--words', wordsPath,
+        '--srt', srtPath
+      ], { maxBuffer: 16 * 1024 * 1024 });
+      const info = JSON.parse(String(stdout).trim().split('\n').at(-1) || '{}');
+      if (!info.ok) throw new Error(info.error || 'bilinmeyen hata');
+
+      const audioStat = await fs.stat(audioPath).catch(() => null);
+      if (!audioStat || audioStat.size < 5000) {
+        throw new Error('ses dosyası boş');
+      }
+
+      const payload = JSON.parse(await fs.readFile(wordsPath, 'utf8'));
+      log(
+        'VoiceAgent',
+        `Ses: ${(audioStat.size / 1024).toFixed(0)} KB, ${info.words} kelime zamanı, ` +
+        `${info.cues} altyazı parçası.`
+      );
+
+      return {
+        audioPath,
+        srtPath,
+        wordsPath,
+        cues: payload.cues || [],
+        words: payload.words || []
+      };
+    } catch (err) {
+      log(
+        'VoiceAgent',
+        `Kelime zamanlaması alınamadı (${String(err?.message || err).slice(0, 160)}); ` +
+        'CLI yedeğine geçiliyor.',
+        'WARN'
+      );
+      return null;
+    }
   }
 }

@@ -19,6 +19,7 @@ import { log } from '../logger.js';
 import { TrendAgent } from '../agents/TrendAgent.js';
 import { ScriptAgent, countWords, splitSentences, estimateSeconds } from '../agents/ScriptAgent.js';
 import { ReviewerAgent } from '../agents/ReviewerAgent.js';
+import { ResearchAgent } from '../agents/ResearchAgent.js';
 import { VoiceAgent } from '../agents/VoiceAgent.js';
 import { WhiteboardVideoAgent } from '../agents/WhiteboardVideoAgent.js';
 import { getAudioDuration } from '../utils/ffmpeg.js';
@@ -67,6 +68,7 @@ async function main() {
   const trend = new TrendAgent();
   const scriptAgent = new ScriptAgent();
   const reviewer = new ReviewerAgent();
+  const researchAgent = new ResearchAgent();
   const voice = new VoiceAgent();
   const video = new WhiteboardVideoAgent();
 
@@ -105,9 +107,31 @@ async function main() {
       `${sentences.length} cümle (~${estimateSeconds(scriptObj.narration).toFixed(0)} sn)\n`
     );
   } else {
+    // 2a) Konu hakkında doğrulanmış bilgi (Wikipedia). Ağ yoksa boş döner.
+    const researchStart = Date.now();
+    const research = await researchAgent.research(topicObj.topic);
+    if (research.facts.length) {
+      console.log(
+        `🔎 Araştırma: ${research.facts.length} bilgi ` +
+        `(${research.title || topicObj.topic}, ${((Date.now() - researchStart) / 1000).toFixed(0)} sn)`
+      );
+    }
+
     const t0 = Date.now();
-    scriptObj = await scriptAgent.generateScript(topicObj);
-    console.log(`⏱️  Senaryo: ${((Date.now() - t0) / 1000).toFixed(0)} sn`);
+    scriptObj = await scriptAgent.generateScript(topicObj, '', research);
+    console.log(
+      `⏱️  Senaryo: ${((Date.now() - t0) / 1000).toFixed(0)} sn ` +
+      `(${scriptObj.scenes?.length || 0} sahne, ${countWords(scriptObj.narration)} kelime)`
+    );
+  }
+
+  if (Array.isArray(scriptObj.scenes) && scriptObj.scenes.length) {
+    console.log('🎬 Sahne taslağı:');
+    scriptObj.scenes.slice(0, 20).forEach((scene, index) => {
+      console.log(`   ${String(index + 1).padStart(2)}. ${scene.narration}`);
+      console.log(`       çizim: ${scene.visualPrompt || '-'}  | bant: ${scene.title || '-'}`);
+    });
+    console.log('');
   }
 
   // Ek Ollama incelemesi varsayılan olarak kapalı: her tur ~1 dakika ekliyor.
@@ -128,7 +152,8 @@ async function main() {
 
   // 3) Ses
   const voiceStarted = Date.now();
-  const { audioPath, srtPath } = await voice.synthesize(scriptObj.narration, workDir);
+  const voiceResult = await voice.synthesize(scriptObj.narration, workDir);
+  const { audioPath, srtPath } = voiceResult;
   const audioSeconds = await voiceDuration(audioPath);
   console.log(
     `⏱️  Seslendirme: ${((Date.now() - voiceStarted) / 1000).toFixed(0)} sn ` +
@@ -148,6 +173,7 @@ async function main() {
     narration: scriptObj.narration,
     sceneHints: scriptObj.sceneHints,
     sceneLabels: scriptObj.labels,
+    words: voiceResult.words || null,
     topic: topicObj.topic,
     scenes: manualScenes.length ? manualScenes : null,
     workDir,
