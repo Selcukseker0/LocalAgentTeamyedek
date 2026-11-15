@@ -37,36 +37,49 @@ seçer; aynı senaryo ikinci kez üretilmez:
    yazılır; sonraki çalıştırmalar bu konuyu (ve benzerini) reddeder. Son
    kategoriler de `usedCategories` içinde tutulur, mümkünse farklı kategori
    seçilir.
-3. `ScriptAgent` senaryoyu **parça parça** üretir (küçük modeller 130 kelimeyi
-   tek yanıtta yazamıyor):
-   1. plan çağrısı → başlık, kanca, üç sebep, kapanış sorusu,
-   2. bölüm 1 → kanca + soru + birinci sebep (7 cümle),
-   3. bölüm 2 → ikinci/üçüncü sebep (6 cümle),
-   4. gerekirse ek cümle çağrısı (hedefe ulaşmak için).
+3. `ScriptAgent` senaryoyu **sahne sahne JSON** olarak üretir (küçük modeller
+   130 kelimeyi tek yanıtta yazamadığı için parça parça):
 
-   Toplam 127-149 kelime (45-50 sn). 109 kelimenin altında kalırsa açık hata
-   verilir; üstündeyse uyarı ile devam edilir. `--review` ile ek inceleme
-   yapılabilir.
-4. Ses `edge-tts` ile üretilir, video gerçek ses süresine göre karelenir;
-   yani süre tahmini değil, ölçülen ses süresi esastır.
+   1. plan çağrısı → başlık, kanca, 4 bilgi, kapanış sorusu,
+   2. bölüm 1 → kanca + soru + birinci bilgi (7 sahne),
+   3. bölüm 2 → ikinci/üçüncü bilgi (6 sahne),
+   4. gerekirse ek sahne çağrısı.
+
+   Her sahne üç alanlıdır: `narration` (seslendirilecek tam cümle),
+   `visual_prompt` (tahtaya çizilecek sahnenin tarifi), `title` (1-3 kelimelik
+   bant yazısı). Modelin döndürdüğü metin **render'dan önce otomatik denetlenir**
+   (aşağıya bakın); denetim geçmezse senaryo 2 kez daha yazdırılır.
+
+4. Ses `edge-tts` ile üretilir ve **kelime kelime zaman damgası** alınır
+   (`src/whiteboard/tts_timing.py`). Altyazı ve sahne geçişleri bu gerçek
+   zamanlara oturur; sabit süreyle bölme yapılmaz. Whisper'a gerek yoktur,
+   zamanlama doğrudan TTS motorundan gelir. Video gerçek ses süresine göre
+   karelenir.
 
 Senaryo, modele "cümle dizisi" olarak yazdırılır:
 
 ```json
-{"sentences":[{"text":"cümlenin kendisi","visual":"tahtaya çizilecek sahne","title":"vurgu"}]}
+{"scenes":[
+  {"narration":"Seslendirilecek tam cümle.","visual_prompt":"buz küpünün üstünden su damlıyor","title":"3 KAT"},
+  ...
+]}
 ```
 
-12-16 cümle, her cümle 9-11 kelime. Model kısa yazarsa senaryo iki tura kadar
-genişletilir; 109 kelimenin altında kalırsa açık hata verilir (bozuk video
-üretilmez). Uzun çıktı ise kısaltılır.
+12-18 sahne, her cümle 6-20 kelime (hedef 8-14). Toplam süre 45-60 saniye
+(~131-171 kelime). Model kısa yazarsa 3 tura kadar ek sahne istenir; 115
+kelimenin altında kalırsa açık hata verilir (bozuk video üretilmez).
 
-Cümleler altyazıya girmeden önce denetlenir:
+**Render'dan önce otomatik kontrol** (`validateScript`): her sahnede
 
-- Prompt şablonu artıkları (`Kanca cümlesi:`, `Soru cümlesi:`, `Sebep 2:`)
-  cümleden **silinir**; model bunları metin sanıp yazsa bile altyazıya düşmez.
-- 6 kelimeden kısa, üç nokta ile yarım kalmış veya bağlaçla biten cümleler
-  atılır (`…` ile biten cümle altyazı olmaz).
-- Tekrar eden cümleler birebir değil, kelime örtüşmesine göre (%72) ayıklanır.
+- `narration` iki nokta, numara (`1)`, `3):`) veya etiket kelimesi
+  (kanca/hook/sebep/kapanış) içermiyorsa,
+- yarım kalmamışsa (`…`, virgül/bağlaç sonu) ve noktalaması varsa,
+- kelime sayısı 5-20 aralığındaysa,
+- aynı cümle iki kez geçmiyorsa (kelime örtüşmesi %70'in altında),
+
+senaryo kabul edilir. Aksi hâlde sorunlar modele geri verilip yeniden yazdırılır
+(2 deneme). Hâlâ bozuksa: sahne sayısı 8'in, kelime 115'in altındaysa üretim
+açık hatayla durur; üstündeyse temizlenmiş hâliyle devam edilir.
 
 ### Senaryoyu hangi model yazıyor?
 
@@ -124,10 +137,13 @@ gösterilir.
 
 Akış:
 
-1. `WhiteboardVideoAgent` senaryoyu cümlelere böler ve süreleri ses dosyası /
-   SRT zamanlamasından çıkarır.
-2. Her cümle için bir sahne seçilir: Ollama varsa model seçer, yoksa Türkçe
-   anahtar kelime eşlemesi devreye girer (`src/agents/WhiteboardVideoAgent.js`).
+1. `WhiteboardVideoAgent` senaryoyu cümlelere böler ve süreleri TTS kelime
+   zamanlarından çıkarır (yoksa altyazı ipuçları, en son tahmini süre).
+2. Her cümle için **1-3 nesnelik çizim kompozisyonu** planlanır: model cümleyi
+   ve `visual_prompt`'u okur, katalogdan nesneleri seçip sayfaya yerleştirir
+   (`{"type":"ice","x":0.42,"y":0.58,"size":0.45}`). Model yoksa anahtar
+   kelimeden tek nesne üretilir; **boş sayfa bırakılmaz**, arka arkaya aynı
+   kompozisyon gelmez.
 3. `src/whiteboard/render.py` (Pillow) her sahneyi kare kare çizer. Çizim
    gerçek marker hissi verecek şekilde yapılır (`src/whiteboard/ink.py`):
    değişken uç kalınlığı ve basınç profili, uç birikmesi, darbeler arasında
@@ -229,8 +245,10 @@ tanımlıdır:
 
 `python src/whiteboard/render.py --list-scenes` komutu güncel listeyi verir.
 
-Katalog 49 sahnedir (buz, tuz, göz, kulak, anahtar, merdiven, köprü, tekne,
-uçak, takvim, ay, mıknatıs, yaprak, yol dahil). Bir sahne videoda en fazla 2 kez
+Katalog 57 nesnedir (buz, tuz, göz, kulak, anahtar, merdiven, köprü, tekne,
+uçak, takvim, ay, mıknatıs, yaprak, yol, insan, iki insan, konuşma balonu,
+yukarı/aşağı ok, yıldız, büyüteç, dişli dahil). Nesneler tek tek de kullanılır,
+1-3 tanesi birleştirilerek sahne kurulur. Bir sahne videoda en fazla 2 kez
 kullanılır, arka arkaya aynı sahne gelmez; konu bir sahneyi doyurduğunda
 aynı görsel aileden (doğa, günlük hayat, bilim...) anlamca en yakın sahne
 seçilir. Hiçbir sahneye uymayan cümlelerde videonun "konu sahnesi" (ör. kahve
@@ -242,9 +260,10 @@ küpü") otomatik olarak katalog kimliğine çevrilir ve kısmi planlar da kabul
 edilir. Hangi cümlenin hangi sahneyi hangi kaynakla aldığı `run_info.json`
 içindeki `scene_plan` alanında görülür.
 
-Yeni sahne eklemek için aynı dosyada `scene_<isim>()` fonksiyonu yazıp
-`SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar kelimeleri
-ekleyin. İsteğe bağlı olarak `src/agents/WhiteboardVideoAgent.js` içindeki
+Yeni nesne eklemek için `src/whiteboard/scenes.py` içinde `scene_<isim>()`
+fonksiyonu yazıp `SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar
+kelimeleri, `WhiteboardVideoAgent.js` içindeki `SCENE_HINTS` sözlüğüne Türkçe
+açıklamayı ekleyin (model bu açıklamadan seçer). İsteğe bağlı olarak `src/agents/WhiteboardVideoAgent.js` içindeki
 `SCENE_HINTS` sözlüğüne Türkçe açıklama ekleyin (Ollama'nın seçmesi için).
 
 ### El görseli
@@ -292,6 +311,24 @@ Video üretildikten sonra konsolda iki satırdan birini görürsünüz:
 Seslendirme hiç üretilemezse akış açık hata verir (`Seslendirme başarısız...`),
 sessiz video üretmez. Sık nedenler: `edge_tts` yanlış Python'a kurulu
 (`PYTHON_BIN` ayarlayın), internet yok veya `TTS_VOICE` geçersiz.
+
+### Altyazı / zamanlama sorunları
+
+- `Ses: 78 KB, 412 kelime zamanı, 61 altyazı parçası.` → zamanlama TTS'ten
+  alındı, altyazılar 6-8 kelimelik parçalar hâlinde cümle sınırlarına oturuyor.
+- `Kelime zamanlaması alınamadı (...); CLI yedeğine geçiliyor.` → `edge_tts`
+  sürümü kelime sınırı bilgisi vermiyor. Çözüm: `python -m pip install -U edge-tts`.
+  Bu durumda video üretilir ama altyazı zamanlaması edge-tts'in kendi VTT'sinden
+  gelir (daha kaba).
+- `Zamanlama kaynağı: kelime zamanları | altyazı ipuçları | tahmini` satırı
+  hangi yolun kullanıldığını söyler.
+
+### Araştırma (konu doğrulama)
+
+`ResearchAgent` konu hakkında Türkçe Wikipedia özetini çeker ve senaryo
+planına "doğrulanmış bilgi" olarak verir; böylece cümleler uydurma yerine
+gerçek bilgiye dayanır. Ağ yoksa veya madde bulunamazsa uyarı yazıp normal
+üretime devam eder (`Araştırma yapılamadı ...`).
 
 ## Kontroller
 

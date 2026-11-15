@@ -58,7 +58,8 @@ export class ManagerAgent {
           }
         }
 
-        const { audioPath, srtPath } = await this.voice.synthesize(scriptObj.narration, workDir);
+        const voiceResult = await this.voice.synthesize(scriptObj.narration, workDir);
+        const { audioPath, srtPath } = voiceResult;
         // Beyaz tahta (keçeli kalem) stili: Pixabay stok klip yerine
         // Pillow ile çizilen kareler kullanılır.
         const { videoPath, duration } = await this.video.renderShorts({
@@ -67,6 +68,7 @@ export class ManagerAgent {
           narration: scriptObj.narration,
           sceneHints: scriptObj.sceneHints,
           sceneLabels: scriptObj.labels,
+          words: voiceResult.words || null,
           topic: topicObj?.topic || scriptObj.title || '',
           workDir
         });

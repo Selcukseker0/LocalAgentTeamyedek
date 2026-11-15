@@ -77,6 +77,14 @@ SCENE_KEYWORDS = {
     "magnet": ["mıknatıs", "miknatis", "manyetik", "çekim", "cekim", "pusula"],
     "leaf": ["yaprak", "bitki", "çiçek", "cicek", "mevsim", "fotosentez", "yeşil", "yesil"],
     "road": ["yol", "patika", "yolculuk", "hedef", "süreç", "surec", "rota"],
+    "person": ["insan", "kişi", "kisi", "biri", "kullanıcı", "kullanici", "çocuk", "cocuk"],
+    "two_people": ["iki kişi", "iki kisi", "insanlar", "topluluk", "herkes", "konuşuyor", "konusuyor"],
+    "arrow_up": ["artıyor", "artiyor", "yüksel", "yuksel", "çoğal", "cogal", "iyileş", "iyiles"],
+    "arrow_down": ["azalıyor", "azaliyor", "düşüyor", "dusuyor", "eriyor", "tükeniyor", "tukeniyor"],
+    "bubble": ["söylüyor", "soyluyor", "anlatıyor", "anlatiyor", "konuşma", "konusma", "söylenti"],
+    "star": ["başarı", "basari", "hedef", "yıldız", "yildiz", "parlak", "ödül", "odul"],
+    "magnifier": ["araştır", "arastir", "incele", "kanıt", "kanit", "detay", "gözlem", "gozlem"],
+    "gear": ["sistem", "mekanizma", "makine", "ayar", "düzenek", "duzenek", "işleyiş", "isleyis"],
     "shopping": ["alışveriş", "alisveris", "fiyat", "indirim", "tüketim", "tuketim", "market"],
 }
 
@@ -744,6 +752,98 @@ def scene_thermometer():
     return s
 
 
+
+def scene_person():
+    """Tek figür: çizgi film insanı (anlatan, bakan, düşünen)."""
+    head = _ellipse(0, -120, 46, 52, 28)
+    body = [(0, -68), (0, 45)]
+    arms = [(-62, 0), (0, -28), (62, 0)]
+    return [(head, BLACK, 13),
+            (body, BLACK, 14),
+            (arms, BLACK, 12),
+            ([(-52, 155), (0, 45)], BLACK, 13),
+            ([(0, 45), (52, 155)], BLACK, 13),
+            (_ellipse(-16, -128, 6, 6, 10), BLACK, 0),
+            (_ellipse(16, -128, 6, 6, 10), BLACK, 0),
+            (_bezier((-18, -104), (-6, -96), (6, -96), (18, -104), 10), BLACK, 6)]
+
+
+def scene_two_people():
+    """İki figür: konuşan/karşılaştıran iki insan."""
+    a_head = _ellipse(-70, -110, 40, 46, 26)
+    b_head = _ellipse(78, -96, 40, 46, 26)
+    return [(a_head, BLACK, 12),
+            ([( -70, -64), (-70, 50)], BLACK, 13),
+            ([(-118, -16), (10, -16)], BLACK, 11),
+            ([(-112, 168), (-70, 50)], BLACK, 12),
+            ([(-70, 50), (-28, 168)], BLACK, 12),
+            (b_head, BLACK, 12),
+            ([(78, -50), (78, 60)], BLACK, 13),
+            ([(26, 4), (150, 4)], BLACK, 11),
+            ([(38, 178), (78, 60)], BLACK, 12),
+            ([(78, 60), (118, 178)], BLACK, 12)]
+
+
+def scene_arrow_up():
+    """Yukarı ok (artış, yükselme, iyileşme)."""
+    return [(_line((0, 180), (0, -170), 26), BLACK, 16),
+            ([(-95, -70), (0, -185), (95, -70)], BLACK, 16)]
+
+
+def scene_arrow_down():
+    """Aşağı ok (azalma, düşüş, kayıp)."""
+    return [(_line((0, -180), (0, 170), 26), BLACK, 16),
+            ([(-95, 70), (0, 185), (95, 70)], BLACK, 16)]
+
+
+def scene_bubble():
+    """Konuşma balonu (söylenti, açıklama, iletişim)."""
+    body = _bezier((-190, -140), (-60, -210), (80, -210), (190, -140), 26) + \
+        _bezier((190, -140), (250, -40), (200, 120), (60, 150), 20) + \
+        _bezier((60, 150), (-40, 168), (-150, 140), (-190, 40), 20) + \
+        _bezier((-190, 40), (-230, -50), (-260, -90), (-190, -140), 14)
+    tail = [(-70, 140), (-110, 240), (0, 160)]
+    return [(body, BLACK, 13),
+            (_poly(tail), BLACK, 12),
+            (_line((-110, -60), (110, -60), 14), BLACK, 9),
+            (_line((-110, -10), (80, -10), 12), BLACK, 9),
+            (_line((-110, 40), (30, 40), 10), BLACK, 9)]
+
+
+def scene_star():
+    """Yıldız (parlaklık, hedef, başarı)."""
+    pts = []
+    for i in range(10):
+        angle = math.pi / 2 + i * math.pi / 5
+        r = 210 if i % 2 == 0 else 88
+        pts.append((r * math.cos(angle), -r * math.sin(angle)))
+    return [(_poly(pts), (240, 200, 70), 10),
+            (_poly(pts), BLACK, 12)]
+
+
+def scene_magnifier():
+    """Büyüteç (inceleme, arama, kanıt)."""
+    lens = _ellipse(-40, -80, 150, 150, 44)
+    handle = [(-40 + 106, -80 + 106), (170, 230)]
+    return [(lens, BLACK, 15),
+            (handle, BLACK, 20),
+            (_ellipse(-90, -130, 44, 44, 26), (200, 230, 250), 0),
+            (_bezier((-160, -150), (-120, -200), (-40, -210), (10, -190), 16), (200, 230, 250), 10)]
+
+
+def scene_gear():
+    """Dişli çark (sistem, ayar, mekanizma)."""
+    ring = _ellipse(0, 0, 150, 150, 48)
+    inner = _ellipse(0, 0, 58, 58, 24)
+    s = [(ring, BLACK, 14), (inner, BLACK, 12)]
+    for i in range(8):
+        angle = i * math.pi / 4
+        x1, y1 = 150 * math.cos(angle), 150 * math.sin(angle)
+        x2, y2 = 205 * math.cos(angle), 205 * math.sin(angle)
+        s.append((_line((x1, y1), (x2, y2), 10), BLACK, 16))
+    return s
+
+
 def scene_ice():
     """Buz küpü (soğuk, donma, buz)."""
     top = [(420, 700), (660, 640), (820, 720), (580, 790)]
@@ -938,15 +1038,31 @@ def scene_leaf():
 
 
 def scene_road():
-    """Yol (hedef, süreç, yolculuk)."""
-    s = [(_line((330, 1300), (520, 640), 24), BLACK, 14),
-         (_line((750, 1300), (560, 640), 24), BLACK, 14),
-         (_line((200, 1300), (880, 1300), 12), BLACK, 12)]
-    for i in range(4):
-        y = 1240 - i * 150
-        s.append((_line((540, y), (540, y - 80), 10), BLACK, 9))
-    return s
+    """Yol (hedef, süreç, yolculuk): çapraz uzanan yol ve kesik şerit."""
+    # Yol, sol-alt köşeden sağ-üst köşeye uzanan bir bant olarak çizilir
+    ux, uy = 0.7071, -0.7071          # yol yönü
+    nx, ny = -uy, ux                  # yola dik yön
+    half = 120.0
+    start_pt = (-360.0, 300.0)
+    end_pt = (330.0, -300.0)
 
+    def edge(offset):
+        p1 = (start_pt[0] + nx * offset, start_pt[1] + ny * offset)
+        p2 = (end_pt[0] + nx * offset, end_pt[1] + ny * offset)
+        return _line(p1, p2, 28)
+
+    s = [(edge(half), BLACK, 15), (edge(-half), BLACK, 15)]
+
+    # Orta şerit: 4 kesik çizgi
+    for i in range(4):
+        t = 0.12 + i * 0.24
+        cx = start_pt[0] + (end_pt[0] - start_pt[0]) * t
+        cy = start_pt[1] + (end_pt[1] - start_pt[1]) * t
+        length = 90.0
+        p1 = (cx - ux * length / 2, cy - uy * length / 2)
+        p2 = (cx + ux * length / 2, cy + uy * length / 2)
+        s.append((_line(p1, p2, 10), BLACK, 13))
+    return s
 
 
 SCENES = {
@@ -998,6 +1114,14 @@ SCENES = {
     "magnet": scene_magnet,
     "leaf": scene_leaf,
     "road": scene_road,
+    "person": scene_person,
+    "two_people": scene_two_people,
+    "arrow_up": scene_arrow_up,
+    "arrow_down": scene_arrow_down,
+    "bubble": scene_bubble,
+    "star": scene_star,
+    "magnifier": scene_magnifier,
+    "gear": scene_gear,
     "generic": scene_generic,
 }
 
@@ -1017,7 +1141,7 @@ def pick_scene_for_text(text):
 DRAW_BOX = (80.0, 340.0, 1000.0, 1590.0)
 
 
-def _fit_scene(strokes, box=DRAW_BOX):
+def _fit_scene(strokes, box=DRAW_BOX, max_scale=1.45):
     """Sahneyi çizim alanına oranlı biçimde sığdırır ve ortalar.
 
     Bu sayede her sahne kareyi benzer şekilde doldurur; hiçbir çizim
@@ -1034,7 +1158,7 @@ def _fit_scene(strokes, box=DRAW_BOX):
 
     box_w = box[2] - box[0]
     box_h = box[3] - box[1]
-    scale = min(box_w / bw, box_h / bh, 1.45)
+    scale = min(box_w / bw, box_h / bh, max_scale)
 
     cx_src = (min_x + max_x) / 2
     cy_src = (min_y + max_y) / 2
@@ -1048,6 +1172,44 @@ def _fit_scene(strokes, box=DRAW_BOX):
     for pts, color, width in strokes:
         out.append(([transform(pt) for pt in pts], color, width))
     return out
+
+
+def render_object(object_id, box, seed=0):
+    """Tek nesneyi verilen kutuya sığdırarak çizer (kompozisyon için)."""
+    fn = SCENES.get(object_id)
+    if fn is None:
+        return []
+    strokes = fn()
+    jittered = [
+        (_jitter(pts, amount=1.6, seed=seed * 13 + i * 7), color, width)
+        for i, (pts, color, width) in enumerate(strokes)
+    ]
+    return _fit_scene(jittered, box, max_scale=6.0)
+
+
+def compose(objects, box=DRAW_BOX):
+    """Sahneyi 1-3 nesneden kurar.
+
+    objects: [{"type": "person", "x": 0.3, "y": 0.6, "size": 0.45}, ...]
+    x/y çizim alanına göre 0-1 oranı, size alanın ne kadarını kaplayacağı.
+    """
+    strokes = []
+    for index, obj in enumerate(objects or []):
+        object_id = (obj or {}).get("type")
+        if object_id not in SCENES:
+            continue
+        cx = float(obj.get("x", 0.5))
+        cy = float(obj.get("y", 0.5))
+        size = float(obj.get("size", 0.55))
+        size = max(0.22, min(0.95, size))
+        box_w = (box[2] - box[0]) * size
+        box_h = (box[3] - box[1]) * size
+        center_x = box[0] + (box[2] - box[0]) * max(0.0, min(1.0, cx))
+        center_y = box[1] + (box[3] - box[1]) * max(0.0, min(1.0, cy))
+        sub = (center_x - box_w / 2, center_y - box_h / 2,
+               center_x + box_w / 2, center_y + box_h / 2)
+        strokes.extend(render_object(object_id, sub, seed=index + 1))
+    return strokes
 
 
 def get_scene(scene_id):

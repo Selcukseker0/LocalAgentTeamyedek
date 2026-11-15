@@ -15,12 +15,12 @@ ${JSON.stringify(scriptObj, null, 2)}
 
 Değerlendirme kriterleri:
 1. İlk 2 saniye dikkat çekiyor mu?
-2. Cümleler anlaşılır Türkçe ve kısa mı? (en fazla 12 kelime)
+2. Cümleler anlaşılır Türkçe ve kısa mı? (7-18 kelime, yarım cümle yok)
 3. Devrik cümle var mı?
 4. Anlaşılmaz/uydurma kelime veya şüpheli bilgi var mı? Varsa onaylama ve bunları düzelt.
-5. Toplam 127-149 kelime (45-50 saniye) mi?
+5. Toplam 130-171 kelime (45-60 saniye) mi?
 6. Yapay/AI vibes veriyor mu?
-7. sceneHints cümle sayısıyla aynı sayıda ve çizilebilir somut nesneler mi?
+7. Her sahnede visual_prompt var mı ve cümlede anlatılan olayı mı tarif ediyor?
 
 Sadece şu JSON formatında dön:
 {"approved": true veya false, "score": 1-10, "feedback": "Ne düzeltilecek — somut ve kısa"}`

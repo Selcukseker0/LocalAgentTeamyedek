@@ -70,6 +70,14 @@ const SCENE_HINTS = {
   magnet: 'Mıknatıs (çekim, manyetizma, etki)',
   leaf: 'Yaprak (bitki, doğa, mevsim)',
   road: 'Yol (hedef, süreç, yolculuk)',
+  person: 'Tek insan figürü (biri, kullanıcı, izleyici)',
+  two_people: 'İki insan (konuşma, karşılaştırma, topluluk)',
+  arrow_up: 'Yukarı ok (artış, iyileşme, yükselme)',
+  arrow_down: 'Aşağı ok (azalma, düşüş, kayıp)',
+  bubble: 'Konuşma balonu (söylenti, açıklama, iletişim)',
+  star: 'Yıldız (hedef, başarı, parlaklık)',
+  magnifier: 'Büyüteç (araştırma, inceleme, kanıt)',
+  gear: 'Dişli (sistem, mekanizma, ayar)',
   shopping: 'Alışveriş çantası (fiyat, tüketim)',
   generic: 'Konuya uymayan nötr çizim'
 };
@@ -145,6 +153,46 @@ export function buildTimeline(sentences, cues, audioDuration) {
     cursor += duration;
     return item;
   });
+}
+
+/**
+ * Kelime zaman damgalarından cümle sınırlarına oturan zaman çizelgesi.
+ * TTS kelime sayısı cümle kelime sayısıyla uyuşmuyorsa null döner.
+ */
+export function buildTimelineFromWords(sentences, words, audioDuration) {
+  if (!Array.isArray(words) || !words.length || !sentences.length) return null;
+
+  const counts = sentences.map((text) => text.split(/\s+/).filter(Boolean).length);
+  const textWords = counts.reduce((sum, n) => sum + n, 0);
+  if (!textWords) return null;
+
+  const ratio = words.length / textWords;
+  if (ratio < 0.75 || ratio > 1.3) return null;
+
+  const timeline = [];
+  let cursor = 0;
+  for (let i = 0; i < sentences.length; i += 1) {
+    const take = Math.max(1, Math.round(counts[i] * ratio));
+    const startIndex = Math.min(cursor, words.length - 1);
+    const endIndex = Math.min(cursor + take - 1, words.length - 1);
+    const start = Number(words[startIndex].start);
+    const end = Number(words[endIndex].end);
+    timeline.push({
+      text: sentences[i],
+      start,
+      end: Math.max(start + 0.4, end),
+      duration: Math.max(0.6, end - start)
+    });
+    cursor = endIndex + 1;
+  }
+
+  // Kalan kelimeler (varsa) son cümleye eklenir; sahne sesin sonuna kadar sürer
+  if (timeline.length) {
+    const last = timeline[timeline.length - 1];
+    last.end = Math.max(last.end, Number(words[words.length - 1].end), audioDuration || 0);
+    last.duration = Math.max(0.6, last.end - last.start);
+  }
+  return timeline;
 }
 
 export class WhiteboardVideoAgent {
@@ -411,6 +459,125 @@ Yalnızca şu JSON biçimini döndür:
     ['time', ['clock', 'calendar', 'moon', 'sun', 'hourglass']]
   ];
 
+  /**
+   * Her cümle için 1-3 nesnelik çizim kompozisyonu ister.
+   * Model yoksa anahtar kelimeden tek nesne üretilir; boş sayfa asla bırakılmaz.
+   */
+  async planCompositions(timeline, { hints = null, topic = '' } = {}) {
+    if (timeline.length === 0) return { compositions: [], sources: [] };
+
+    const available = await this.listScenes();
+    const catalog = available
+      .map((id) => `- ${id}: ${SCENE_HINTS[id] || 'çizim'}`)
+      .join('\n');
+
+    const rows = timeline
+      .map((item, i) => {
+        const hint = Array.isArray(hints) ? hints[i] : null;
+        return `${i + 1}. ${item.text}${hint ? `\n   Çizim tarifi: ${hint}` : ''}`;
+      })
+      .join('\n');
+
+    let planned = [];
+    try {
+      const result = await askLLM({
+        system: 'Sen bir çizim yönetmenisin. Yalnızca istenen JSON nesnesini döndür.',
+        prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts var.
+Her cümle için katalogdan 1-3 nesne seç ve sayfaya yerleştir.
+Cümlede anlatılan OLAYI göster: kim/ne, ne yapıyor. Tek kelimeye bakıp nesne seçme.
+Aynı nesneyi her cümlede tekrarlama; komşu sahneler birbirinden farklı olsun.
+Boş sahne yok: her cümlede en az bir nesne olacak.
+Yerleşim: x ve y 0-1 arası (0.5 = sayfanın ortası), size nesnenin alanın ne kadarını
+kapladığı (0.25-0.6). Ana nesne büyük, ayrıntılar küçük olsun.
+
+Katalog:
+${catalog}
+
+Cümleler:
+${rows}
+
+Yalnızca şu JSON biçimini döndür:
+{"scenes":[{"index":1,"objects":[{"type":"ice","x":0.42,"y":0.58,"size":0.45},
+{"type":"sun","x":0.76,"y":0.26,"size":0.3}]}, ...]}`,
+        json: true,
+        temperature: 0.2,
+        numPredict: 900
+      });
+
+      planned = Array.isArray(result?.scenes) ? result.scenes : [];
+    } catch (err) {
+      log2(`Çizim kompozisyonu alınamadı: ${err.message}`, 'WARN');
+    }
+
+    const byIndex = new Map();
+    for (const entry of planned) {
+      const index = Number(entry?.index ?? entry?.i ?? entry?.sentence);
+      if (!Number.isFinite(index)) continue;
+      const objects = this.normalizeObjects(entry?.objects ?? entry?.items, available);
+      if (objects.length) byIndex.set(index, objects);
+    }
+
+    const compositions = [];
+    const sources = [];
+    let previousKey = '';
+
+    for (let i = 0; i < timeline.length; i += 1) {
+      let objects = byIndex.get(i + 1) || null;
+      let source = objects ? 'model' : null;
+
+      if (!objects) {
+        const hint = Array.isArray(hints) ? hints[i] : '';
+        const ranked = this.scoreScenes(`${hint || ''} ${timeline[i].text}`);
+        const type = ranked[0] || this.pickAnchor([timeline[i].text], topic) || 'question';
+        objects = [{ type, x: 0.5, y: 0.5, size: 0.55 }];
+        source = 'anahtar kelime';
+      }
+
+      // Arka arkaya aynı çizim olmasın: ana nesneyi aynı aileden başkasıyla değiştir
+      const key = objects.map((obj) => obj.type).sort().join('+');
+      if (key === previousKey) {
+        const primary = objects[0].type;
+        const alternative = this.relatedScene(primary, new Map([[primary, 1]]), primary) ||
+          (primary === 'question' ? 'book' : 'question');
+        if (alternative && alternative !== primary) {
+          objects = [{ ...objects[0], type: alternative }, ...objects.slice(1)];
+          source = `${source}+çeşitlendirme`;
+        }
+      }
+      previousKey = objects.map((obj) => obj.type).sort().join('+');
+      compositions.push(objects);
+      sources.push(source);
+    }
+
+    const fromModel = sources.filter((item) => item?.startsWith('model')).length;
+    log2(`Çizim kompozisyonu: ${fromModel}/${timeline.length} model, ${timeline.length - fromModel} yedek.`);
+    return { compositions, sources };
+  }
+
+  /** Modelin döndürdüğü nesne listesini güvenli aralıklara çeker. */
+  normalizeObjects(raw, available) {
+    if (!Array.isArray(raw)) return [];
+    const clamp = (value, min, max, fallback) => {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return fallback;
+      return Math.min(max, Math.max(min, number));
+    };
+
+    return raw
+      .map((obj) => {
+        const type = String(obj?.type ?? obj?.id ?? obj?.object ?? '').trim().toLocaleLowerCase('tr');
+        if (!available.includes(type)) return null;
+        return {
+          type,
+          x: clamp(obj?.x, 0.16, 0.84, 0.5),
+          y: clamp(obj?.y, 0.16, 0.84, 0.5),
+          size: clamp(obj?.size ?? obj?.scale, 0.24, 0.62, 0.45)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+
   /** Sahne yoksa anahtar kelime eşlemesi (Türkçe ekleri tolere eder). */
   scoreScenes(text) {
     const t = (text || '').toLocaleLowerCase('tr');
@@ -447,6 +614,14 @@ Yalnızca şu JSON biçimini döndür:
       ['magnet', ['mıknatıs', 'miknatis', 'manyetik', 'çekim gücü', 'cekim gucu', 'pusula']],
       ['leaf', ['yaprak', 'bitki', 'çiçek', 'cicek', 'mevsim', 'fotosentez', 'yeşil', 'yesil']],
       ['road', ['yol ', 'patika', 'yolculuk', 'süreç', 'surec', 'rota', 'hedefe']],
+      ['person', ['insan', 'kişi', 'kisi', 'biri', 'sen ', 'kullanıcı', 'kullanici', 'çocuk', 'cocuk']],
+      ['two_people', ['iki kişi', 'iki kisi', 'insanlar', 'topluluk', 'herkes', 'konuşuyor', 'konusuyor']],
+      ['arrow_up', ['artıyor', 'artiyor', 'yüksel', 'yuksel', 'çoğal', 'cogal', 'iyileş', 'iyiles', 'güçlen']],
+      ['arrow_down', ['azalıyor', 'azaliyor', 'düşüyor', 'dusuyor', 'eriyor', 'tükeniyor', 'tukeniyor', 'kaybol']],
+      ['bubble', ['söylüyor', 'soyluyor', 'anlatıyor', 'anlatiyor', 'konuşma', 'konusma', 'söylenti', 'soylenti', 'diyor']],
+      ['star', ['başarı', 'basari', 'hedef', 'yıldız', 'yildiz', 'parlak', 'ödül', 'odul']],
+      ['magnifier', ['araştır', 'arastir', 'incele', 'kanıt', 'kanit', 'detay', 'gözlem', 'gozlem']],
+      ['gear', ['sistem', 'mekanizma', 'makine', 'ayar', 'düzenek', 'duzenek', 'işleyiş', 'isleyis']],
       ['planet', ['gezegen', 'dünya', 'dunya', 'uzay', 'mars', 'yıldız', 'yildiz', 'astronot', 'ay']],
       ['house', ['ev', 'konut', 'kira', 'emlak', 'aile', 'kapı', 'kapi', 'bina', 'oda', 'mutfak']],
       ['check', ['doğru', 'dogru', 'onay', 'çözüm', 'cozum', 'başarı', 'basari']],
@@ -604,7 +779,8 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
    */
   async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
-    sceneHints = null, sceneLabels = null, topic = '', fileName = 'shorts_whiteboard.mp4' }) {
+    sceneHints = null, sceneLabels = null, topic = '', fileName = 'shorts_whiteboard.mp4',
+    words = null }) {
     // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
     await fs.rm(framesDir, { recursive: true, force: true });
@@ -621,20 +797,32 @@ Yalnızca şu JSON biçimini döndür:
     if (!duration) duration = Math.max(4, scenes?.length ? scenes.length * 3 : 12);
 
     const sentences = splitSentences(narration);
-    const timeline = buildTimeline(sentences, cues, duration);
 
-    const { sceneIds, sceneSources } = await this.planSceneChain(timeline, {
-      hints: sceneHints,
-      topic: topic || narration,
-      scenes
-    });
+    // 1) tercih: kelime zaman damgaları (Whisper yerine doğrudan TTS'ten)
+    let timeline = buildTimelineFromWords(sentences, words, duration || audioDuration);
+    let timingSource = 'kelime zamanları';
+    // 2) altyazı ipuçları, 3) kelime sayısına göre tahmin
+    if (!timeline) {
+      timeline = buildTimeline(sentences, cues, duration);
+      timingSource = cues.length === sentences.length ? 'altyazı ipuçları' : 'tahmini';
+    }
+    log2(`Zamanlama kaynağı: ${timingSource} (${sentences.length} cümle).`);
+
+    // Cümle başına 1-3 nesnelik çizim kompozisyonu
+    const { compositions, sources: compositionSources } = scenes
+      ? {
+        compositions: scenes.map((id) => [{ type: id, x: 0.5, y: 0.5, size: 0.55 }]),
+        sources: scenes.map(() => 'elle')
+      }
+      : await this.planCompositions(timeline, { hints: sceneHints, topic: topic || narration });
 
     const manifest = {
       fps: FPS,
       width: WIDTH,
       height: HEIGHT,
       scenes: timeline.map((item, i) => ({
-        id: sceneIds[i] || this.fallbackScene(item.text, sceneIds[i - 1]),
+        id: (compositions[i]?.[0]?.type) || this.fallbackScene(item.text, null),
+        objects: compositions[i] || null,
         duration: Math.max(1.2, item.duration),
         text: item.text,
         label: Array.isArray(sceneLabels) && sceneLabels.length === timeline.length
@@ -643,9 +831,17 @@ Yalnızca şu JSON biçimini döndür:
       }))
     };
 
+    const sceneIds = manifest.scenes.map((scene) => scene.id);
+    const sceneSources = compositionSources;
+
     const manifestPath = path.join(workDir, 'whiteboard_manifest.json');
     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-    log2(`Sahne planı: ${manifest.scenes.map((s) => s.id).join(' → ')}`);
+    log2(
+      'Çizim planı: ' +
+      manifest.scenes
+        .map((scene) => (scene.objects || []).map((obj) => obj.type).join('+') || scene.id)
+        .join(' → ')
+    );
 
     const sheetPath = path.join(workDir, 'preview.jpg');
     await this.renderFrames(manifestPath, framesDir, srtPath, sheetPath);
@@ -684,9 +880,11 @@ Yalnızca şu JSON biçimini döndür:
         index: i + 1,
         text: sc.text,
         scene: sc.id,
+        objects: sc.objects || null,
         label: sc.label || null,
         source: sceneSources[i] || 'bilinmiyor'
       })),
+      timing: timingSource,
       sentences: manifest.scenes.map((sc) => sc.text),
       frameCount: frames.length,
       duration: Number(finalDuration.toFixed(2)),
