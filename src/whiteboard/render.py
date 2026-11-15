@@ -35,7 +35,7 @@ from ink import (  # noqa: E402
     truncate,
 )
 from scenes import SCENES, get_scene, pick_scene_for_text  # noqa: E402
-from subtitles import SubtitleRenderer, parse_srt  # noqa: E402
+from subtitles import SubtitleRenderer, parse_srt, find_font  # noqa: E402
 
 DRAW_FRACTION = 0.88     # çizim, sahne süresinin bu kadarında tamamlanır
 DRAW_SPEED = 1500.0      # çizim hızı (1080px tuvalde piksel/saniye)
@@ -409,6 +409,50 @@ def make_sheet(frame_paths, out_path, thumb_w=432):
     return out_path
 
 
+
+# --------------------------------------------------------------------- etiket
+# Beyaz tahtaya yazılan kısa başlık ("3000 YIL", "SU YOK" gibi).
+# Her sahne için bir kez üretilip önbelleğe alınır: kare başına maliyet ~0.
+_LABEL_CACHE = {}
+
+
+def board_label(text, width, height):
+    """Sahne etiketini marker yazısı gibi hazırlar (saydam katman)."""
+    key = (text, width, height)
+    cached = _LABEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    font = find_font(int(width * 0.072))
+    probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    bbox = probe.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    pad = int(width * 0.04)
+    layer_w = min(width - pad * 2, max(int(text_w + pad * 2), int(width * 0.3)))
+    layer_h = int(text_h + width * 0.09)
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    x = (layer_w - text_w) // 2 - bbox[0]
+    draw.text((x, -bbox[1]), text, font=font, fill=(22, 22, 22, 240))
+
+    # Altına hafif el çizimi çizgi
+    import random as _random
+    rnd = _random.Random(len(text) * 7 + layer_w)
+    y = layer_h - int(width * 0.045)
+    pts = []
+    for i in range(0, 41):
+        px = int(pad + (text_w + pad * 0.2) * i / 40)
+        pts.append((px, y + rnd.randint(-2, 2)))
+    draw.line(pts, fill=(22, 22, 22, 200), width=max(3, int(width * 0.006)), joint="curve")
+
+    layer = layer.rotate(-1.8, resample=Image.BICUBIC, expand=False)
+    _LABEL_CACHE[key] = layer
+    return layer
+
+
 def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=None,
            sheet_path=None, frame_format="jpg"):
     with open(manifest_path, encoding="utf-8") as f:
@@ -437,9 +481,15 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
         hand = hand_variants[scene_no % len(hand_variants)] if hand_variants else None
         renderer = SceneRenderer(scene_id, duration, fps, width, height, hand, seed=scene_no)
 
+        label = scene.get("label") or ""
+        label_layer = board_label(label, width, height) if label else None
+
         for i in range(renderer.n_frames):
             t = i / fps
             frame = renderer.frame(t)
+            if label_layer is not None:
+                frame.paste(label_layer, ((width - label_layer.width) // 2,
+                                          int(height * 0.115)), label_layer)
             if subs:
                 subs.draw(frame, elapsed + t)
             out_file = os.path.join(out_dir, f"frame_{frame_idx:05d}.{frame_format}")

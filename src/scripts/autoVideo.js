@@ -21,6 +21,7 @@ import { ScriptAgent, countWords, splitSentences, estimateSeconds } from '../age
 import { ReviewerAgent } from '../agents/ReviewerAgent.js';
 import { VoiceAgent } from '../agents/VoiceAgent.js';
 import { WhiteboardVideoAgent } from '../agents/WhiteboardVideoAgent.js';
+import { getAudioDuration } from '../utils/ffmpeg.js';
 
 function hasFlag(name) {
   return process.argv.includes(`--${name}`);
@@ -49,6 +50,14 @@ function slugify(text) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48) || 'video';
+}
+
+async function voiceDuration(audioPath) {
+  try {
+    return await getAudioDuration(audioPath);
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -120,7 +129,11 @@ async function main() {
   // 3) Ses
   const voiceStarted = Date.now();
   const { audioPath, srtPath } = await voice.synthesize(scriptObj.narration, workDir);
-  console.log(`⏱️  Seslendirme: ${((Date.now() - voiceStarted) / 1000).toFixed(0)} sn`);
+  const audioSeconds = await voiceDuration(audioPath);
+  console.log(
+    `⏱️  Seslendirme: ${((Date.now() - voiceStarted) / 1000).toFixed(0)} sn ` +
+    `(${audioSeconds ? `${audioSeconds.toFixed(1)} sn ses` : 'ses süresi okunamadı'})`
+  );
 
   // 4) Video
   const fileName = `shorts_whiteboard_${ts}.mp4`;
@@ -134,6 +147,7 @@ async function main() {
     srtPath,
     narration: scriptObj.narration,
     sceneHints: scriptObj.sceneHints,
+    sceneLabels: scriptObj.labels,
     topic: topicObj.topic,
     scenes: manualScenes.length ? manualScenes : null,
     workDir,

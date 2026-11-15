@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { log } from '../logger.js';
-import { askOllama } from '../llm/ollamaClient.js';
+import { askLLM } from '../llm/provider.js';
 import { getAudioDuration, resolveBinaries } from '../utils/ffmpeg.js';
 
 const execFileAsync = promisify(execFile);
@@ -324,7 +324,7 @@ export class WhiteboardVideoAgent {
       : '';
 
     try {
-      const result = await askOllama({
+      const result = await askLLM({
         system: 'Sen bir çizim yönetmenisin. Yalnızca istenen JSON nesnesini döndür.',
         prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
 Her cümle için katalogdan EN UYGUN sahneyi seç. Sahne kimliğini katalogdaki gibi yaz.
@@ -502,6 +502,17 @@ Yalnızca şu JSON biçimini döndür:
     return infoPath;
   }
 
+  /** Üretilen mp4 içinde ses akışı var mı? (ffmpeg -i çıktısındaki "Audio:" satırı) */
+  async hasAudioStream(videoPath) {
+    const { ffmpeg } = await resolveBinaries();
+    try {
+      await execFileAsync(ffmpeg, ['-i', videoPath], { maxBuffer: 4 * 1024 * 1024 });
+      return false;
+    } catch (err) {
+      return /Stream #\d+:\d+.*Audio:/i.test(String(err?.stderr || ''));
+    }
+  }
+
   async encodeVideo({ framesDir, audioPath, outPath, frameCount, ext = FRAME_FORMAT }) {
     const { ffmpeg } = await resolveBinaries();
     const args = [
@@ -539,7 +550,7 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
    */
   async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
-    sceneHints = null, topic = '', fileName = 'shorts_whiteboard.mp4' }) {
+    sceneHints = null, sceneLabels = null, topic = '', fileName = 'shorts_whiteboard.mp4' }) {
     // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
     await fs.rm(framesDir, { recursive: true, force: true });
@@ -571,7 +582,10 @@ Yalnızca şu JSON biçimini döndür:
       scenes: timeline.map((item, i) => ({
         id: sceneIds[i] || this.fallbackScene(item.text, sceneIds[i - 1]),
         duration: Math.max(1.2, item.duration),
-        text: item.text
+        text: item.text,
+        label: Array.isArray(sceneLabels) && sceneLabels.length === timeline.length
+          ? (sceneLabels[i] || null)
+          : null
       }))
     };
 
@@ -595,6 +609,18 @@ Yalnızca şu JSON biçimini döndür:
       ext: FRAME_FORMAT
     });
 
+    // Ses bekleniyorsa gerçekten videoya girmiş mi kontrol et
+    if (hasAudio) {
+      const withAudio = await this.hasAudioStream(finalPath);
+      if (withAudio) {
+        log2(`Ses videoya eklendi (${audioDuration.toFixed(1)}s).`);
+      } else {
+        log2('UYARI: Ses dosyası verildi ama mp4 içinde ses akışı yok!', 'WARN');
+      }
+    } else {
+      log2('Ses dosyası yok: video sessiz üretildi.', 'WARN');
+    }
+
     const finalDuration = frames.length / FPS;
     const runInfo = await this.writeRunInfo(workDir, {
       topic: topic || null,
@@ -604,6 +630,7 @@ Yalnızca şu JSON biçimini döndür:
         index: i + 1,
         text: sc.text,
         scene: sc.id,
+        label: sc.label || null,
         source: sceneSources[i] || 'bilinmiyor'
       })),
       sentences: manifest.scenes.map((sc) => sc.text),

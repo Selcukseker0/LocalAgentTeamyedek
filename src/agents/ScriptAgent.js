@@ -1,4 +1,4 @@
-import { askOllama } from '../llm/ollamaClient.js';
+import { askLLM } from '../llm/provider.js';
 import { log } from '../logger.js';
 
 // Hedef: 45-50 saniyelik Shorts. edge-tts (+20% hız) Türkçe için yaklaşık
@@ -73,6 +73,7 @@ export function normalizeScript(raw) {
     tags: Array.isArray(raw.tags) ? raw.tags.map(cleanText).filter(Boolean) : [],
     narration: '',
     sceneHints: null,
+    labels: null,
     visualQueries: []
   };
 
@@ -81,7 +82,8 @@ export function normalizeScript(raw) {
       .map((item) => (typeof item === 'string' ? { text: item } : item || {}))
       .map((item) => ({
         text: cleanText(item.text),
-        scene: cleanText(item.scene)
+        scene: cleanText(item.scene),
+        label: cleanText(item.label)
       }))
       .filter((item) => item.text)
       // Cümle sonu noktalama yoksa ekle: birleştirince sınırlar kaybolmasın
@@ -91,6 +93,7 @@ export function normalizeScript(raw) {
       }));
 
     script.narration = items.map((item) => item.text).join(' ');
+    script.labels = items.map((item) => (item.label ? item.label.toLocaleUpperCase('tr') : null));
 
     // Her öğe birden fazla cümleye bölünürse sahne ipucu cümle sayısıyla eşlenir
     if (items.length && items.every((item) => item.scene)) {
@@ -134,19 +137,26 @@ function buildPrompt(topicObj, { feedback = '', previous = null, strict = false 
   }
 
   lines.push(
-    'Yapı:',
-    `1) "sentences" dizisinde ${MIN_SENTENCES}-${MAX_SENTENCES} cümle olsun.`,
+    'KURGU (kısa video senaryosu gibi, ama sahne yönetmeni için):',
+    '- Cümle 1-2: KANCA. Şaşırtıcı bir sayı/durum + merak sorusu. ("... hâlâ yenebilir durumdaydı.")',
+    '- Cümle 3: SORU. İzleyicinin aklındaki "nasıl oluyor?" sorusunu sor.',
+    '- Cümle 4-8: SEBEP 1 ve SEBEP 2. Her sebep 2-3 cümle, somut ve tek tek anlatılır.',
+    '- Cümle 9-11: ek ayrıntı ya da üçüncü sebep (varsa).',
+    '- Son cümle: KAPANIŞ SORUSU ("Peki sence ...?").',
+    'Kurallar:',
+    `1) "sentences" ${MIN_SENTENCES}-${MAX_SENTENCES} öğe olsun.`,
     `2) Her cümle ${WORDS_PER_SENTENCE} kelime (9'dan kısa, 12'den uzun olmasın).`,
     `3) Toplam ${MIN_WORDS}-${MAX_WORDS} kelime olacak; ${MIN_SENTENCES} cümleden az yazma.`,
-    '4) İlk cümle güçlü bir kanca olsun ("... hiç düşündün mü?", şaşırtıcı bir sayı vb.).',
-    '5) Ortada üç somut bilgi anlat (her biri 2-3 cümle).',
-    '6) Son cümle izleyiciye kısa bir soru olsun.',
-    '7) Her cümle için "scene" alanına beyaz tahtaya çizilecek somut bir nesne yaz:',
-    '   "vazo", "süt kutusu", "kahve fincanı", "güneş", "gökyüzü", "gezegen",',
+    '4) Cümleler konuşma diliyle yazılsın; "birincisi", "ikincisi", "peki" gibi bağlaçlar serbest.',
+    '5) Emin olmadığın bilgiyi, sayıyı veya iddiayı yazma.',
+    '6) Her cümle için "scene": beyaz tahtaya çizilecek TEK somut nesne/durum.',
+    '   Örnekler: "bal kavanozu", "süt kutusu", "kahve fincanı", "güneş", "gezegen",',
     '   "bakteri", "saat", "para", "grafik", "kalkan", "alev", "bulut", "arı",',
-    '   "kitap", "ev", "telefon", "soru işareti", "kalp", "klavye", "kutu".',
-    '8) Emin olmadığın bilgiyi, sayıyı veya iddiayı yazma; dili gündelik Türkçe tut.',
-    '9) Başlığa #shorts ekleme; title en fazla 70 karakter olsun.',
+    '   "kitap", "ev", "telefon", "soru işareti", "kalp", "pil", "roket", "harita".',
+    '7) Her cümle için "label": tahtaya yazılacak 1-3 kelimelik etiket (en fazla 18 karakter).',
+    '   Örnekler: "3000 YIL", "SU YOK", "ANTİSEPTİK", "2 SEBEP", "PEKİ NEDEN?".',
+    '   Etiket cümlenin ana fikrini versin; her cümlede farklı olsun.',
+    '8) Başlığa #shorts ekleme; title en fazla 70 karakter olsun.',
     ''
   );
 
@@ -161,7 +171,8 @@ function buildPrompt(topicObj, { feedback = '', previous = null, strict = false 
   lines.push(
     'Yalnızca şu JSON biçimini döndür:',
     '{"title":"...","description":"...","tags":["...","..."],' +
-      '"sentences":[{"text":"...","scene":"..."},{"text":"...","scene":"..."}],' +
+      '"sentences":[{"text":"...","scene":"...","label":"..."},' +
+      '{"text":"...","scene":"...","label":"..."}],' +
       '"visualQueries":["...","...","...","..."]}'
   );
 
@@ -171,7 +182,7 @@ function buildPrompt(topicObj, { feedback = '', previous = null, strict = false 
 export class ScriptAgent {
   async requestScript(prompt, temperature = 0.8, numPredict = 900) {
     const startedAt = Date.now();
-    const raw = await askOllama({
+    const raw = await askLLM({
       system: SYSTEM_PROMPT,
       prompt,
       json: true,
@@ -264,6 +275,11 @@ export class ScriptAgent {
     // sceneHints cümle sayısıyla eşleşmiyorsa sahne planı otomatik yapılır
     if (!Array.isArray(script.sceneHints) || script.sceneHints.length !== sentences.length) {
       script.sceneHints = null;
+    }
+    if (!Array.isArray(script.labels) ||
+        script.labels.length !== sentences.length ||
+        script.labels.some((label) => !label)) {
+      script.labels = null;
     }
 
     if (!script.title) script.title = cleanText(topicObj.topic);
