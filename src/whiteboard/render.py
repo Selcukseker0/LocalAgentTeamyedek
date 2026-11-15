@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
+from PIL import Image, ImageChops, ImageDraw, ImageFilter  # noqa: E402
 
 from ink import (  # noqa: E402
     draw_fill_reveal,
@@ -205,6 +205,171 @@ def paste_hand(frame, sprite, anchor, offset=(0, 0)):
 def _ease_in_out(t):
     t = min(1.0, max(0.0, t))
     return t * t * (3 - 2 * t)
+
+
+
+def autocrop_white(img, padding=18):
+    """Beyaz kenar boşluklarını kırpar (üretilen görsellerde sık görülür)."""
+    rgb = img.convert("RGB")
+    diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, (255, 255, 255)))
+    bbox = diff.getbbox()
+    if not bbox or bbox == (0, 0, rgb.width, rgb.height):
+        return rgb
+    left, top, right, bottom = bbox
+    left = max(0, left - padding)
+    top = max(0, top - padding)
+    right = min(rgb.width, right + padding)
+    bottom = min(rgb.height, bottom + padding)
+    if right - left < 80 or bottom - top < 80:
+        return rgb
+    return rgb.crop((left, top, right, bottom))
+
+
+def split_line_and_color(img):
+    """Üretilmiş illüstrasyonu siyah kontur ve renk dolgusu katmanlarına ayırır.
+
+    Beyaz zemin şeffaf olur; koyu pikseller çizgi katmanına, doygun (renkli)
+    pikseller boya katmanına gider. Böylece görsel önce kontur gibi "çizilip"
+    ardından renkleri boyanabilir.
+    """
+    rgb = img.convert("RGB")
+    lum = rgb.convert("L")
+    sat = rgb.convert("HSV").getchannel("S")
+
+    dark = lum.point(lambda v: 255 if v < 115 else 0)
+    not_white = lum.point(lambda v: 255 if v < 244 else 0)
+    not_dark = dark.point(lambda v: 0 if v else 255)
+    colorful = sat.point(lambda v: 255 if v > 30 else 0)
+
+    # Kenar yumuşaklığı için çok koyu olmayan ama açık da olmayan pikseller
+    # hafif saydam çizgi olarak alınır (bant etkisi vermesin diye dar aralık)
+    line_mask = ImageChops.lighter(dark, lum.point(lambda v: 60 if v < 148 else 0))
+    color_mask = ImageChops.multiply(ImageChops.multiply(not_white, colorful), not_dark)
+
+    line = rgb.copy()
+    line.putalpha(line_mask)
+    color = rgb.copy()
+    color.putalpha(color_mask)
+    return line, color
+
+
+class ImageSceneRenderer:
+    """Hazır bir illüstrasyonu maske ile çizip sonra renklerini boyar.
+
+    - Sahne süresinin ilk %68'inde siyah konturlar yukarıdan aşağıya açılır,
+      kalem ucu açılma sınırını takip eder.
+    - Kalan sürede renk katmanı soldan sağa süpürülerek (fırça gibi) dolar.
+    """
+
+    LINE_PHASE = 0.68
+    COLOR_PHASE = 0.24
+    EXIT_TIME = 0.45
+    MAX_WIDTH_RATIO = 0.86
+    MAX_HEIGHT_RATIO = 0.56
+
+    def __init__(self, image_path, duration, fps, width, height, hand, seed=0, has_label=False):
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.duration = max(0.8, float(duration))
+        self.n_frames = max(1, int(round(self.duration * fps)))
+        self.hand = hand
+        self.paper = make_paper(width, height, seed=19 + seed * 5).convert("RGBA")
+
+        source = Image.open(image_path).convert("RGB")
+        # Beyaz kenar boşluklarını kırp: görsel alanı doldursun
+        source = autocrop_white(source)
+        max_w = width * self.MAX_WIDTH_RATIO
+        # Üstte bant yazısı, altta altyazı için boşluk bırakılır
+        top_limit = height * (0.215 if has_label else 0.125)
+        bottom_limit = height * 0.70
+        avail_h = max(120.0, bottom_limit - top_limit)
+
+        ratio = min(max_w / source.width, avail_h / source.height)
+        size = (max(1, int(source.width * ratio)), max(1, int(source.height * ratio)))
+        resized = source.resize(size, Image.LANCZOS)
+
+        self.size = size
+        self.line_layer, self.color_layer = split_line_and_color(resized)
+        self.pos = ((width - size[0]) // 2, int(top_limit + (avail_h - size[1]) / 2))
+        self.line_end = self.duration * self.LINE_PHASE
+        self.color_end = self.line_end + self.duration * self.COLOR_PHASE
+
+    # ------------------------------------------------------------- yardımcı
+
+    def _scan_mask(self, progress):
+        """Üstten aşağıya açılan maske (kenarı yumuşak)."""
+        mask = Image.new("L", self.size, 0)
+        draw = ImageDraw.Draw(mask)
+        frontier = progress * self.size[1]
+        solid = int(max(0, frontier - 12))
+        if solid > 0:
+            draw.rectangle([0, 0, self.size[0], solid], fill=255)
+        band = 24
+        for i in range(band):
+            y = solid + i
+            if y >= self.size[1]:
+                break
+            value = int(255 * (i / band))
+            draw.rectangle([0, y, self.size[0], y + 1], fill=value)
+        return mask, frontier
+
+    def _brush_mask(self, progress):
+        """Soldan sağa süpüren boya maskesi (dikey yumuşak kenar)."""
+        mask = Image.new("L", self.size, 0)
+        draw = ImageDraw.Draw(mask)
+        frontier = progress * self.size[0]
+        solid = int(max(0, frontier - 20))
+        if solid > 0:
+            draw.rectangle([0, 0, solid, self.size[1]], fill=255)
+        band = 40
+        for i in range(band):
+            x = solid + i
+            if x >= self.size[0]:
+                break
+            value = int(255 * (i / band))
+            draw.rectangle([x, 0, x + 1, self.size[1]], fill=value)
+        return mask, frontier
+
+    # ------------------------------------------------------------- kare
+
+    def frame(self, t):
+        frame = self.paper.copy()
+        line_progress = min(1.0, t / self.line_end) if self.line_end else 1.0
+        eased = _ease_in_out(line_progress)
+
+        mask, frontier = self._scan_mask(eased)
+        line = self.line_layer.copy()
+        line.putalpha(ImageChops.multiply(self.line_layer.getchannel("A"), mask))
+        frame.alpha_composite(line, self.pos)
+
+        color_progress = 0.0
+        if t > self.line_end:
+            color_progress = min(1.0, (t - self.line_end) / max(0.01, self.color_end - self.line_end))
+            brush, _fx = self._brush_mask(_ease_in_out(color_progress))
+            color = self.color_layer.copy()
+            color.putalpha(ImageChops.multiply(self.color_layer.getchannel("A"), brush))
+            frame.alpha_composite(color, self.pos)
+
+        tip = None
+        if t <= self.line_end:
+            tip = (self.pos[0] + self.size[0] * 0.5,
+                   self.pos[1] + min(self.size[1] - 2, frontier))
+        elif t <= self.color_end:
+            tip = (self.pos[0] + self.size[0] * color_progress * 0.92,
+                   self.pos[1] + self.size[1] * 0.62)
+        if self.hand is not None:
+            if tip is not None:
+                wobble = math.sin(t * 8.0) * 2.4
+                paste_hand(frame, self.hand, tip, offset=(wobble, wobble * 0.3))
+            else:
+                leave = (t - self.color_end) / self.EXIT_TIME if self.color_end else 1.0
+                if leave < 1.0:
+                    e = _ease_in_out(min(1.0, leave))
+                    paste_hand(frame, self.hand,
+                               (self.pos[0] + self.size[0] * 0.9, self.pos[1] + self.size[1] * 0.62),
+                               offset=(e * 900 * (self.width / 1080), e * 820 * (self.height / 1920)))
+        return frame
 
 
 class SceneRenderer:
@@ -481,8 +646,13 @@ def render(manifest_path, out_dir, fps, width, height, with_hand=True, srt_path=
         scene_id = scene.get("id") or pick_scene_for_text(scene.get("text", ""))
         duration = float(scene.get("duration", 3.0))
         hand = hand_variants[scene_no % len(hand_variants)] if hand_variants else None
-        renderer = SceneRenderer(scene_id, duration, fps, width, height, hand,
-                                 seed=scene_no, objects=scene.get("objects"))
+        image_path = scene.get("image")
+        if image_path and os.path.exists(image_path):
+            renderer = ImageSceneRenderer(image_path, duration, fps, width, height, hand,
+                                          seed=scene_no, has_label=bool(scene.get("label")))
+        else:
+            renderer = SceneRenderer(scene_id, duration, fps, width, height, hand,
+                                     seed=scene_no, objects=scene.get("objects"))
 
         label = scene.get("label") or ""
         label_layer = board_label(label, width, height) if label else None
