@@ -10,7 +10,12 @@ birleştirmek için kullanılır.
 import os
 import re
 
-from PIL import Image, ImageDraw, ImageFont
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:  # pragma: no cover - kullanıcıya anlaşılır mesaj
+    raise SystemExit(
+        "Pillow kurulu değil. Kurulum: python -m pip install -r requirements.txt"
+    ) from None
 
 SRT_TIME = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
 
