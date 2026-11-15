@@ -32,12 +32,16 @@ SKY = (118, 176, 220)
 SCENE_KEYWORDS = {
     "egyptian_vase": ["mısır", "misir", "mezar", "vazo", "antik", "firavun", "tarih", "arkeolog"],
     "honey_pot": ["bal", "tatlı", "tatli", "şeker", "seker", "reçel", "rec el"],
+    "coffee": ["kahve", "çekirdek", "cekirdek", "fincan", "bardak", "kafein", "barista", "koku"],
     "milk_bread_honey": ["süt", "sut", "ekmek", "bozul", "bozuk", "gıda", "gida"],
     "water_drop": ["su", "damla", "nem", "ıslak", "islak", "kuruma"],
     "bacteria_honey": ["bakteri", "mikrop", "kurut", "öldür", "oldur", "hastalık", "hastalik"],
     "question": ["neden", "nasıl", "nasil", "soru", "?", "merak"],
-    "clock": ["saat", "zaman", "yıl", "yil", "gün", "gun", "süre", "sure"],
-    "sun": ["güneş", "gunes", "sıcak", "sicak", "yaz"],
+    "clock": ["saat", "zaman", "yıl", "yil", "süre", "sure", "dakika"],
+    "sun": ["güneş", "gunes", "sıcak", "sicak", "yaz", "ışın", "isin", "parlak"],
+    "sky": ["gökyüzü", "gokyuzu", "ufuk", "gündüz", "gunduz", "mavi", "hava"],
+    "rainbow": ["gökkuşağı", "gokkusagi", "renk", "spektrum", "ışık", "isik", "tayf"],
+    "planet": ["gezegen", "dünya", "dunya", "uzay", "mars", "ay ", "yıldız", "yildiz", "astronot"],
     "heart": ["kalp", "sevgi", "aşk", "ask", "mutlu"],
     "money": ["para", "dolar", "euro", "zengin", "fiyat", "ekonomi"],
     "house": ["ev", "yuva", "oda", "kapı", "kapi"],
@@ -493,6 +497,91 @@ def scene_shopping():
     return s
 
 
+
+def scene_sky():
+    """Ufuk + güneş + bulutlar (gökyüzü, gündüz, ufuk)."""
+    s = [(_line((90, 1120), (990, 1120), 20), BLACK, 11)]
+    s.append((_ellipse(760, 720, 130, 130), HONEY, 0))
+    s.append((_ellipse(760, 720, 130, 130), BLACK, 12))
+    for a in range(0, 360, 45):
+        rad = math.radians(a)
+        s.append((_line((760 + 165 * math.cos(rad), 720 + 165 * math.sin(rad)),
+                        (760 + 225 * math.cos(rad), 720 + 225 * math.sin(rad))), BLACK, 9))
+    for cx, cy, r in [(280, 780, 70), (370, 720, 90), (470, 780, 65),
+                      (330, 900, 60), (520, 880, 55)]:
+        s.append((_ellipse(cx, cy, r, r * 0.65), (235, 238, 240), 0))
+        s.append((_ellipse(cx, cy, r, r * 0.65), BLACK, 9))
+    return s
+
+
+def scene_rainbow():
+    """Gökkuşağı (renkler, ışık, spektrum)."""
+    s = []
+    colors = [(214, 74, 70), (226, 146, 52), (232, 196, 66), (92, 168, 96), (74, 126, 200)]
+    for i, color in enumerate(colors):
+        r = 400 - i * 34
+        arc = [(540 + r * math.cos(math.radians(a)), 1180 - r * math.sin(math.radians(a)))
+               for a in range(0, 181, 4)]
+        s.append((arc, color, 0))
+        s.append((arc, BLACK, 7))
+    s.append((_ellipse(200, 1180, 80, 55), (235, 238, 240), 0))
+    s.append((_ellipse(200, 1180, 80, 55), BLACK, 9))
+    s.append((_ellipse(880, 1180, 80, 55), (235, 238, 240), 0))
+    s.append((_ellipse(880, 1180, 80, 55), BLACK, 9))
+    return s
+
+
+def scene_planet():
+    """Gezegen (dünya, uzay, astronomi)."""
+    s = []
+    s.append((_ellipse(520, 900, 230, 230), SKY, 0))
+    s.append((_ellipse(520, 900, 230, 230), BLACK, 13))
+    for cx, cy, r in [(450, 830, 46), (610, 960, 38), (470, 1010, 30), (600, 800, 26)]:
+        s.append((_ellipse(cx, cy, r, r * 0.9), (150, 196, 228), 0))
+        s.append((_ellipse(cx, cy, r, r * 0.9), BLACK, 8))
+    # Yörünge ve küçük uydu
+    orbit = [(520 + 330 * math.cos(math.radians(a)), 900 + 120 * math.sin(math.radians(a)))
+             for a in range(0, 360, 6)]
+    s.append((orbit + [orbit[0]], BLACK, 8))
+    s.append((_ellipse(820, 830, 42, 42), GRAY, 0))
+    s.append((_ellipse(820, 830, 42, 42), BLACK, 9))
+    return s
+
+
+
+def scene_coffee():
+    """Kahve fincanı (kahve, çekirdek, kafein, sabah rutini)."""
+    s = []
+    # Fincan gövdesi (U biçimli)
+    body = [(320, 900)]
+    body += _bezier((320, 900), (300, 1080), (400, 1180), (540, 1180), 16)
+    body += _bezier((540, 1180), (680, 1180), (780, 1080), (760, 900), 16)
+    s.append((body + [(320, 900)], BLACK, 14))
+    # Ağız (elips) ve kahve yüzeyi
+    s.append((_ellipse(540, 900, 220, 52), BLACK, 13))
+    s.append((_ellipse(540, 905, 186, 36), BREAD_DARK, 0))
+    # Kulp
+    handle = []
+    for a in range(-70, 71, 6):
+        rad = math.radians(a)
+        handle.append((740 + 120 * math.cos(rad), 1010 + 110 * math.sin(rad)))
+    s.append((handle, BLACK, 12))
+    # Buhar
+    for dx in (-90, 0, 90):
+        steam = [(540 + dx + 16 * math.sin(i / 3.0), 820 - i * 9) for i in range(0, 14)]
+        s.append((steam, BLACK, 8))
+    # Çekirdekler
+    for cx, cy, rot in [(250, 1280, 20), (360, 1330, -15), (830, 1270, 10)]:
+        bean = _ellipse(cx, cy, 52, 40)
+        bean = [((x - cx) * math.cos(math.radians(rot)) - (y - cy) * math.sin(math.radians(rot)) + cx,
+                 (x - cx) * math.sin(math.radians(rot)) + (y - cy) * math.cos(math.radians(rot)) + cy)
+                for x, y in bean]
+        s.append((bean, BREAD_DARK, 0))
+        s.append((bean, BLACK, 10))
+        s.append((_line((cx - 22, cy), (cx + 22, cy)), BLACK, 8))
+    return s
+
+
 SCENES = {
     "egyptian_vase": scene_egyptian_vase,
     "honey_pot": scene_honey_pot,
@@ -516,6 +605,10 @@ SCENES = {
     "factory": scene_factory,
     "cloud_rain": scene_cloud_rain,
     "shopping": scene_shopping,
+    "sky": scene_sky,
+    "rainbow": scene_rainbow,
+    "planet": scene_planet,
+    "coffee": scene_coffee,
     "generic": scene_generic,
 }
 

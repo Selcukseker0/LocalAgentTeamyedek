@@ -50,12 +50,97 @@ async function preflight(agent) {
   }
 }
 
-const DEFAULT_NARRATION =
-  "Mısır'daki mezarlarda 3000 yıllık bal bulundu ve hâlâ yenebilir durumdaydı. " +
-  'Bir süt birkaç günde bozulurken, bal nasıl bozulmuyor? ' +
-  'Birincisi, bal çok az su içerir. Bakteriler susuz ortamda çoğalamaz. ' +
-  'İkincisi, bal asidik ve şeker oranı çok yüksek. Bu da bakterileri kurutur. ' +
-  'Peki balın bozulmaması için tek şart bu mu?';
+// Demo metinleri: her çalıştırmada rastgele biri seçilir (hep aynı video çıkmasın).
+// Gerçek akış için `npm run auto-video` kullan: trend konusunu kendi bulur.
+const SAMPLE_NARRATIONS = [
+  // ~137 kelime ≈ 45-50 saniye
+  "Mısır'daki bir mezarda üç bin yıllık bal bulundu ve hâlâ yenebilir durumdaydı. " +
+  'Bu, balın neden asla bozulmadığını merak ettiriyor. ' +
+  'Normalde süt birkaç günde ekşir, ekmek ise küflenir. ' +
+  'Balın sırrı, içindeki su miktarının çok az olmasında saklı. ' +
+  'Bakteriler su olmadan çoğalamaz, bu yüzden bal onlar için kuru bir çöl gibidir. ' +
+  'İkinci sebep ise balın asidik yapısı. ' +
+  'Balın pH değeri çoğu bakterinin yaşayamayacağı kadar düşük. ' +
+  'Üçüncü sebep, arıların bala eklediği doğal enzimler. ' +
+  'Bu enzimler hidrojen peroksit üretir ve mikropları etkisiz hale getirir. ' +
+  'Peki bal her koşulda bozulmaz mı? ' +
+  'Hayır, bal suya temas ederse fermente olabilir. ' +
+  'Bu yüzden balı kuru ve kapalı saklamak gerekir. ' +
+  'Kristalleşen bal bozulmuş değildir, sadece şekeri çökelmiştir. ' +
+  'Ilık suda bekletmek onu tekrar akıcı hale getirir. ' +
+  'Bu sayede bal, yüzyıllar boyunca tazeliğini koruyabilir. ' +
+  'Sence mutfağında en uzun dayanan yiyecek hangisi?',
+
+  // ~139 kelime ≈ 45-50 saniye
+  'Gökyüzü neden mavidir, hiç merak ettin mi? ' +
+  'Güneş ışığı aslında bütün renkleri birlikte taşır. ' +
+  'Atmosferdeki moleküller mavi ışığı diğerlerinden çok saçar. ' +
+  'Bu saçılma yüzünden gökyüzüne baktığımızda maviyi görürüz. ' +
+  'Gün batımında ışık atmosferde daha uzun bir yol alır. ' +
+  'Mavi ışık yolda dağılıp gider, geriye kırmızı ve turuncu kalır. ' +
+  'Bu yüzden ufuk akşamları kızıl bir renge bürünür. ' +
+  'Uzayda ise atmosfer yoktur. ' +
+  'Bu yüzden astronotlar gökyüzünü gündüz bile simsiyah görür. ' +
+  "Mars'ta atmosfer ince olduğu için gökyüzü kahverengimsi görünür. " +
+  "Güneş battığında ise Mars'ta mavi bir parıltı oluşur. " +
+  'Gökyüzünün rengi, atmosferin kalınlığına ve tozuna bağlıdır. ' +
+  'Bu yüzden her gezegenin gökyüzü farklı bir renktedir. ' +
+  'Bilim insanları uzak gezegenlerin rengini simüle edebiliyor. ' +
+  'Bu bilgi, teleskoplarla yapılan ölçümlerle doğrulanıyor. ' +
+  'Yani gökyüzü dediğimiz şey aslında bir ışık oyunudur. ' +
+  'Atmosfer olmasaydı gökyüzü her yerde karanlık olurdu. ' +
+  'Sence hangi gezegenin gökyüzünü görmek isterdin?',
+
+  // ~131 kelime ≈ 45 saniye
+  'Buz neden bu kadar kaygandır, hiç düşündün mü? ' +
+  'Aslında buzu kaygan yapan şey buzun kendisi değildir. ' +
+  'Yüzeyinde oluşan çok ince bir su tabakası vardır. ' +
+  'Ayak bastığında basınç buzu anında biraz eritir. ' +
+  'Bu ince su filmi, ayağınla zemin arasında kaygan bir yastık oluşturur. ' +
+  'Kayakçılar bu yüzden buz üzerinde neredeyse sürtünmesiz kayar. ' +
+  'Peki hava çok soğuk olduğunda neden daha az kayarız? ' +
+  'Çünkü eksi otuz derecede o su tabakası zar zor oluşur. ' +
+  'Bilim insanları bu konuyu yüz yıldır tartışıyor. ' +
+  'Bazı ölçümler yüzeyde gerçekten sıvı bir katman buluyor. ' +
+  'Bu katman, buzun kristal yapısından kaynaklanıyor. ' +
+  'Yani buz, göründüğü kadar basit bir madde değildir. ' +
+  'Kışın arabanın kapısı da bu yüzden donar. ' +
+  'Donmuş kapıyı zorlamak yerine biraz beklemek gerekir. ' +
+  'Buz üzerinde yürürken küçük adımlar düşmeyi zorlaştırır. ' +
+  'Yola tuz dökmek ise buzu daha da hızlı eritir. ' +
+  'Sence en kaygan zemin doğal olarak hangisi?',
+
+  // ~131 kelime ≈ 45 saniye
+  "Kahve dünyayı nasıl değiştirdi, hiç düşündün mü? " +
+  "Kahve ilk olarak Etiyopya'da keşfedildi. " +
+  'Bir çoban, keçilerinin bu meyveyi yedikten sonra hareketlendiğini fark etti. ' +
+  "Yemen üzerinden Ortadoğu'ya, oradan da Avrupa'ya yayıldı. " +
+  'Kahve çekirdeği aslında bir meyvenin çekirdeğidir. ' +
+  "Avrupa'da ilk kahvehaneler hızla buluşma noktası oldu. " +
+  'Tüccarlar haberleri, sanatçılar fikirlerini burada paylaştı. ' +
+  'Bazı hükümdarlar bu sohbetlerden korkup kahveyi yasakladı. ' +
+  'Ama yasaklar işe yaramadı, kahve daha da yayıldı. ' +
+  'Kavurma sıcaklığı tadı tamamen değiştirir. ' +
+  'Uzmanlar bu yüzden her çekirdek için farklı profil kullanır. ' +
+  'Bugün dünyada günde iki milyardan fazla fincan kahve içiliyor. ' +
+  'Kahve, sabah rutininin yanında küçük bir ekonomi yarattı. ' +
+  'Bir fincan kahvenin arkasında yetiştiriciden baristaya uzun bir yol var. ' +
+  'Tek bir fincan için yaklaşık elli çekirdek kullanılıyor. ' +
+  'Soğuk demleme yöntemi daha yumuşak bir tat bırakıyor. ' +
+  'Kahvenin kokusu bile uyanıklığı bir miktar artırabiliyor. ' +
+  'Peki sabah kahven olmasa günün nasıl başlardı?'
+];
+
+
+// Örnekler sırayla döner: her demo bir öncekinden farklı bir konu çıkarır.
+// (Son seçim `output/whiteboard-demo/.last-sample` dosyasında tutulur.)
+function pickSample(previousIndex = -1) {
+  const total = SAMPLE_NARRATIONS.length;
+  const index = previousIndex < 0
+    ? Math.floor(Math.random() * total)
+    : (previousIndex + 1) % total;
+  return { index, text: SAMPLE_NARRATIONS[index] };
+}
 
 function stamp() {
   const d = new Date();
@@ -101,21 +186,51 @@ function buildSrt(narration, totalDuration) {
     .join('\n');
 }
 
+const LAST_SAMPLE_FILE = '.last-sample';
+
+async function readLastSample(outDir) {
+  try {
+    const raw = await fs.readFile(path.join(outDir, LAST_SAMPLE_FILE), 'utf8');
+    const index = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(index) ? index : -1;
+  } catch {
+    return -1;
+  }
+}
+
 async function main() {
-  const narration = argValue('text', DEFAULT_NARRATION).replace(/\s+/g, ' ').trim();
   const audioArg = argValue('audio');
   const srtArg = argValue('srt');
   const outDir = path.resolve(argValue('out', path.join(config.paths.outputDir, 'whiteboard-demo')));
 
   await fs.mkdir(outDir, { recursive: true });
+
+  const textArg = argValue('text');
+  let narration = textArg;
+  let sampleIndex = -1;
+  if (!narration) {
+    const previous = await readLastSample(outDir);
+    const picked = pickSample(previous);
+    narration = picked.text;
+    sampleIndex = picked.index;
+    await fs.writeFile(path.join(outDir, LAST_SAMPLE_FILE), String(sampleIndex), 'utf8');
+    console.log(
+      `ℹ️  Rastgele örnek metin #${sampleIndex + 1} kullanıldı ` +
+      `(${narration.split(/\s+/).filter(Boolean).length} kelime, ~` +
+      `${(narration.split(/\s+/).filter(Boolean).length / 2.9).toFixed(1)} sn).\n` +
+      '   Trend konusundan kendi senaryosunu üretmesi için: npm run auto-video\n'
+    );
+  }
+  narration = narration.replace(/\s+/g, ' ').trim();
+
   console.log(`Çalışma klasörü: ${outDir}`);
 
   let srtPath = null;
   if (srtArg) {
     srtPath = path.resolve(srtArg);
   } else {
-    // ~2.6 kelime/saniye konuşma hızı varsayımı
-    const estimated = Math.max(6, narration.split(/\s+/).length / 2.6);
+    // edge-tts tr-TR ~2.9 kelime/saniye (TTS_WORDS_PER_SECOND ile uyumlu)
+    const estimated = Math.max(6, narration.split(/\s+/).length / 2.9);
     srtPath = path.join(outDir, 'demo.srt');
     await fs.writeFile(srtPath, buildSrt(narration, estimated), 'utf8');
     console.log(`Altyazı üretildi: ${srtPath} (~${estimated.toFixed(1)}s)`);

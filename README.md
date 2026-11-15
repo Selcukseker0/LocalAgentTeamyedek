@@ -21,8 +21,41 @@ Ollama uygulamasının/servisinin çalıştığından emin olun.
 ## Çalıştırma
 
 ```bash
-npm start
+npm start          # Telegram botu + otomatik zamanlanmış üretim
+npm run auto-video # tek seferlik: trend konusu -> senaryo -> ses -> 45-50 sn Short
 ```
+
+### Her çalıştırmada yeni konu, 45-50 saniyelik Short
+
+`npm run auto-video` (veya `npm start`) her çalıştığında **kendi konusunu**
+seçer; aynı senaryo ikinci kez üretilmez:
+
+1. `TrendAgent` güncel başlıkları toplar (Google Trends TR, BBC Türkçe,
+   r/todayilearned) ve Ollama'ya "en ilgi çekici, daha önce işlenmemiş konu"
+   seçtirir. RSS/Ollama erişilemezse 26 konuluk yedek liste devreye girer.
+2. Seçilen konu `data/history.json` içindeki `usedTopics` listesine **hemen**
+   yazılır; sonraki çalıştırmalar bu konuyu (ve benzerini) reddeder. Son
+   kategoriler de `usedCategories` içinde tutulur, mümkünse farklı kategori
+   seçilir.
+3. `ScriptAgent` 45-50 saniyeye denk gelen **127-149 kelime / 10-15 cümle**
+   senaryo ister, tutmazsa yeniden yazdırır. `ReviewerAgent` aynı ölçütlerle
+   denetler.
+4. Ses `edge-tts` ile üretilir, video gerçek ses süresine göre karelenir;
+   yani süre tahmini değil, ölçülen ses süresi esastır.
+
+Hız kalibrasyonu: `tr-TR-AhmetNeural --rate=+20%` yaklaşık **saniyede 2.9
+kelime** okuyor. Farklı ses/hız kullanırsanız `.env` içinde
+`TTS_WORDS_PER_SECOND` değerini güncelleyin (örn. `2.6`).
+
+```bash
+# Konuyu kendiniz seçmek isterseniz:
+node src/scripts/autoVideo.js --topic "Buz neden kaygandır?"
+# İnceleme adımını atlamak için:
+node src/scripts/autoVideo.js --no-review
+```
+
+Çıktı: `output/auto/<zaman damgası>-<konu>/shorts_whiteboard_<zaman damgası>.mp4`,
+yanında `preview.jpg`, `run_info.json` ve `youtube_metadata.json`.
 
 ## Shorts video görünümü (beyaz tahta / keçeli kalem stili)
 
@@ -44,7 +77,9 @@ Akış:
    kalemin havada gezinmesi, kâğıt grain/lif dokusu ve vinyet, yarı saydam
    bantlı renk dolguları. El sahne başında kadraja girer, kalemi takip eder
    ve sahne sonunda kareyi terk eder. Altyazılar da karelere gömülür.
-4. `ffmpeg` kareleri ses ile birleştirip `shorts_whiteboard.mp4` üretir.
+4. `ffmpeg` kareleri ses ile birleştirip zaman damgalı
+   `shorts_whiteboard_YYYYMMDD-HHMMSS.mp4` dosyasını üretir; her çalıştırma
+   kendi klasörüne yazar (`preview.jpg`, `run_info.json`, `frames/`).
 
 ### Gereksinimler
 
@@ -58,6 +93,10 @@ paketindeki statik sürüm bulunur. Özel bir kurulum için `FFMPEG_PATH`
 değişkenini kullanın.
 
 ### Tek başına deneme
+
+> `whiteboard-demo` hızlı bir görsel kontroldür: her çalıştırmada 45-50
+> saniyelik örnek metinlerden birini **rastgele** seçer. Gerçek akış (trend
+> konusu + kendi senaryosu) için `npm run auto-video` kullanın.
 
 ```bash
 npm run whiteboard-demo
@@ -125,8 +164,14 @@ tanımlıdır:
   `book`, `check`, `cross`, `generic`
 - Trend/ekonomi: `chart`, `money`, `shopping`, `factory`
 - Teknoloji/sağlık/çevre: `phone`, `shield`, `flame`, `cloud_rain`
+- Günlük hayat: `coffee`
+- Doğa/bilim: `sky`, `rainbow`, `planet`, `coffee`
 
 `python src/whiteboard/render.py --list-scenes` komutu güncel listeyi verir.
+
+Bir sahne videoda en fazla 2 kez kullanılır; konu bir sahneyi doyurduğunda
+aynı görsel aileden (doğa, günlük hayat, bilim...) devam edilir, üst üste aynı
+sahne gelmez.
 
 Yeni sahne eklemek için aynı dosyada `scene_<isim>()` fonksiyonu yazıp
 `SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar kelimeleri
@@ -151,12 +196,17 @@ tekrar ediyormuş hissi azalır ve sprite sınırında sert kesik görünmez.
 
 ## Kontroller
 
+Projede ayrı bir test paketi yok; hızlı doğrulama için:
+
 ```bash
-npm run typecheck
-npm test
+node --check src/agents/WhiteboardVideoAgent.js   # sözdizimi
+node --check src/scripts/autoVideo.js
+npm run whiteboard-demo                           # uçtan uca duman testi (sessiz video)
 ```
 
-`npm test` şu an TypeScript tür kontrolünü çalıştırır; henüz ayrı bir birim test paketi değildir.
+`npm run whiteboard-demo` ~45 saniyelik sessiz bir video üretir; süre, sahne
+zinciri ve çıktı dosyası konsolda raporlanır. `run_info.json` içindeki
+`duration` değeri beklenen aralıkta mı diye bakın.
 
 ## Yapılandırma
 
