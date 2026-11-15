@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { log } from '../logger.js';
 import { askLLM } from '../llm/provider.js';
+import { ImageAgent } from './ImageAgent.js';
 import { getAudioDuration, resolveBinaries } from '../utils/ffmpeg.js';
 
 const execFileAsync = promisify(execFile);
@@ -198,6 +199,7 @@ export function buildTimelineFromWords(sentences, words, audioDuration) {
 export class WhiteboardVideoAgent {
   constructor() {
     this._python = null;
+    this.image = new ImageAgent();
   }
 
   /**
@@ -808,13 +810,39 @@ Yalnızca şu JSON biçimini döndür:
     }
     log2(`Zamanlama kaynağı: ${timingSource} (${sentences.length} cümle).`);
 
-    // Cümle başına 1-3 nesnelik çizim kompozisyonu
-    const { compositions, sources: compositionSources } = scenes
-      ? {
-        compositions: scenes.map((id) => [{ type: id, x: 0.5, y: 0.5, size: 0.55 }]),
-        sources: scenes.map(() => 'elle')
-      }
-      : await this.planCompositions(timeline, { hints: sceneHints, topic: topic || narration });
+    // 1) Sahne başına üretilmiş illüstrasyon (API varsa)
+    const imageJobs = timeline.map((item, i) => ({
+      narration: item.text,
+      description: (Array.isArray(sceneHints) ? sceneHints[i] : '') || ''
+    }));
+    const images = scenes && scenes.length ? scenes.map(() => null)
+      : await this.image.generateForScenes(imageJobs, workDir).catch((err) => {
+        log2(`Görsel üretimi atlandı: ${err.message}`, 'WARN');
+        return timeline.map(() => null);
+      });
+    const imageCount = images.filter(Boolean).length;
+    if (imageCount) {
+      log2(`Görseller kullanılıyor: ${imageCount}/${timeline.length} sahne için üretilmiş illüstrasyon.`);
+    } else if (this.image.isEnabled()) {
+      log2('Üretilmiş görsel yok; yerleşik çizim kompozisyonlarına dönülüyor.', 'WARN');
+    }
+
+    // 2) Görseli olmayan sahneler için 1-3 nesnelik kompozisyon
+    let compositions;
+    let compositionSources;
+    if (scenes && scenes.length) {
+      compositions = scenes.map((id) => [{ type: id, x: 0.5, y: 0.5, size: 0.55 }]);
+      compositionSources = scenes.map(() => 'elle');
+    } else if (imageCount === timeline.length) {
+      // Tüm sahneler için illüstrasyon var: kompozisyon planı gerekmez
+      compositions = timeline.map(() => null);
+      compositionSources = timeline.map(() => 'üretilmiş görsel');
+    } else {
+      ({ compositions, sources: compositionSources } = await this.planCompositions(
+        timeline,
+        { hints: sceneHints, topic: topic || narration }
+      ));
+    }
 
     const manifest = {
       fps: FPS,
@@ -822,7 +850,8 @@ Yalnızca şu JSON biçimini döndür:
       height: HEIGHT,
       scenes: timeline.map((item, i) => ({
         id: (compositions[i]?.[0]?.type) || this.fallbackScene(item.text, null),
-        objects: compositions[i] || null,
+        objects: images[i] ? null : (compositions[i] || null),
+        image: images[i] || null,
         duration: Math.max(1.2, item.duration),
         text: item.text,
         label: Array.isArray(sceneLabels) && sceneLabels.length === timeline.length
@@ -837,9 +866,12 @@ Yalnızca şu JSON biçimini döndür:
     const manifestPath = path.join(workDir, 'whiteboard_manifest.json');
     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
     log2(
-      'Çizim planı: ' +
+      'Sahne içerikleri: ' +
       manifest.scenes
-        .map((scene) => (scene.objects || []).map((obj) => obj.type).join('+') || scene.id)
+        .map((scene) => {
+          if (scene.image) return `görsel(${path.basename(scene.image)})`;
+          return (scene.objects || []).map((obj) => obj.type).join('+') || scene.id;
+        })
         .join(' → ')
     );
 
@@ -881,6 +913,7 @@ Yalnızca şu JSON biçimini döndür:
         text: sc.text,
         scene: sc.id,
         objects: sc.objects || null,
+        image: sc.image ? path.basename(sc.image) : null,
         label: sc.label || null,
         source: sceneSources[i] || 'bilinmiyor'
       })),

@@ -4,17 +4,17 @@ import { log } from '../logger.js';
 // Hedef: 45-60 saniyelik Shorts. edge-tts (+20% hız) Türkçe için yaklaşık
 // saniyede 2.9 kelime okuyor; TTS_WORDS_PER_SECOND ile kalibre edilebilir.
 const WPS = Number(process.env.TTS_WORDS_PER_SECOND || 2.9);
-const TARGET_MIN_SEC = 45;
-const TARGET_MAX_SEC = 60;
+const TARGET_MIN_SEC = 30;
+const TARGET_MAX_SEC = 45;
 
-const MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 1.0);    // 131
-const MAX_WORDS = Math.round(TARGET_MAX_SEC * WPS * 0.98);   // 171
+const MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 1.0);    // 87
+const MAX_WORDS = Math.round(TARGET_MAX_SEC * WPS * 0.98);   // 128
 // Bu sınırın altında video hedeften kısa kalır ama üretim durmaz
-const ACCEPT_MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 0.88); // ~115
+const ACCEPT_MIN_WORDS = Math.round(TARGET_MIN_SEC * WPS * 0.86); // ~75
 
 const PART_SENTENCES = 7;
 const MIN_SENTENCE_WORDS = 5;
-const MAX_SENTENCE_WORDS = 20;
+const MAX_SENTENCE_WORDS = 14;
 const MAX_REGEN = 2;
 const LABEL_MAX_CHARS = 18;
 
@@ -165,7 +165,8 @@ export function deriveLabel(narration, topic = '') {
     .filter((word) => word.length >= 4 && !LABEL_STOPWORDS.has(normalizeTr(word)));
 
   const lower = normalizeTr(sentence);
-  const found = topicWords.find((word) => lower.includes(stem(word)));
+  // Konu kelimesi tam hâliyle geçmeli ("bozulmaz" -> "bozulduğunu" eşleşmesin)
+  const found = topicWords.find((word) => lower.includes(normalizeTr(word)));
   return found ? fitLabel(found) : null;
 }
 
@@ -181,8 +182,9 @@ export function normalizeScenes(raw) {
     .map((item) => (typeof item === 'string' ? { narration: item } : item || {}))
     .map((item) => ({
       narration: cleanText(item.narration ?? item.text ?? item.cumle ?? item.sentence),
-      visualPrompt: cleanText(
-        item.visual_prompt ?? item.visualPrompt ?? item.visual ?? item.scene ?? ''
+      imagePrompt: cleanText(
+        item.image_prompt ?? item.imagePrompt ?? item.visual_prompt ?? item.visualPrompt
+        ?? item.visual ?? item.scene ?? ''
       ),
       titleHint: cleanText(item.title ?? item.label ?? item.etiket ?? '')
     }))
@@ -247,6 +249,7 @@ export function dedupeScenes(scenes, threshold = 0.7) {
  */
 export function validateScript(scenes) {
   const problems = [];
+  const warnings = [];
   if (!Array.isArray(scenes) || scenes.length < 8) {
     problems.push(`sahne sayısı ${scenes?.length ?? 0} (en az 8 olmalı)`);
   }
@@ -264,10 +267,39 @@ export function validateScript(scenes) {
     seen.add(key);
 
   }
+  // Aynı ifade üç kez geçiyorsa senaryo kendini tekrar ediyor demektir
+  const trigrams = new Map();
+  for (const scene of scenes || []) {
+    const tokens = normalizeTr(scene.narration)
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let i = 0; i + 2 < tokens.length; i += 1) {
+      const key = tokens.slice(i, i + 3).join(' ');
+      trigrams.set(key, (trigrams.get(key) || 0) + 1);
+    }
+  }
+  const repeated = [...trigrams.entries()].filter(([, count]) => count >= 3);
+  if (repeated.length) {
+    problems.push(`tekrar eden ifade: "${repeated[0][0]}" (${repeated[0][1]} kez)`);
+  }
+
+  // Her sahnede somut bilgi olmalı: sayı, özel isim veya neden-sonuç
+  const concrete = (scenes || []).filter((scene) => {
+    const text = scene.narration || '';
+    if (/\d/.test(text)) return true;
+    if (/(çünkü|bu yüzden|bu sayede|sayesinde|nedeniyle|dolayı)/i.test(text)) return true;
+    // Cümle başı dışında büyük harfle başlayan kelime (özel isim)
+    return /\S\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,}/.test(text);
+  }).length;
+  if (scenes?.length && concrete / scenes.length < 0.5) {
+    warnings.push(`somut bilgi az (${concrete}/${scenes.length} sahne)`);
+  }
+
   const words = countWords((scenes || []).map((scene) => scene.narration).join(' '));
   if (words < ACCEPT_MIN_WORDS) problems.push(`toplam ${words} kelime (en az ${ACCEPT_MIN_WORDS})`);
   if (words > MAX_WORDS + 25) problems.push(`toplam ${words} kelime (çok uzun)`);
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, warnings };
 }
 
 // ---------------------------------------------------------------- ajan
@@ -294,16 +326,18 @@ export class ScriptAgent {
       feedback ? `Editör notu: ${feedback}` : '',
       facts,
       '',
-      '45-60 saniyelik dikey bir Shorts planla.',
-      'Yapı: ilk 3 saniyede merak uyandıran kısa bir giriş, ortada 3-4 net bilgi,',
+      '30-45 saniyelik dikey bir Shorts planla.',
+      'Yapı: ilk 2 saniyede merak uyandıran kısa bir giriş, ortada 4 net bilgi,',
       'sonda tek cümlelik kapanış sorusu.',
+      'Her bilgi SOMUT olsun: sayı, tarih, isim veya neden-sonuç içersin.',
+      'Aynı fikri farklı kelimelerle tekrar etme.',
       'Dil Türkçe, gündelik ve akıcı olsun. Emin olmadığın bilgiyi yazma.',
       '',
       'Yalnızca şu JSON biçimini döndür:',
       '{"title":"en fazla 70 karakter",',
       ' "description":"1-2 cümle",',
       ' "tags":["...","...","..."],',
-      ' "hook":"en fazla 8 kelimelik şaşırtıcı giriş cümlesi",',
+      ' "hook":"en fazla 8 kelimelik, sayı veya şaşırtıcı bilgi içeren giriş cümlesi",',
       ' "facts":["birinci bilgi","ikinci bilgi","üçüncü bilgi","dördüncü bilgi"],',
       ' "closing":"kapanış sorusu (en fazla 10 kelime)"}'
     ].filter(Boolean).join('\n');
@@ -353,22 +387,25 @@ export class ScriptAgent {
       sections,
       '',
       `Toplam TAM ${target} cümle yaz. Eksik cümle bırakma.`,
-      'Her cümle 8-14 kelime olsun; 6 kelimeden kısa, 20 kelimeden uzun olmasın.',
-      'Cümleler birbirini tekrar etmesin, her cümle kendi başına anlaşılsın.',
+      'Her cümle 7-12 kelime olsun; 5 kelimeden kısa, 14 kelimeden uzun olmasın.',
+      'Her cümle TEK bir fikir anlatsın (2-4 saniyelik sahne).',
+      'Her cümlede SOMUT bilgi olsun: sayı, tarih, isim veya neden-sonuç.',
+      'Aynı fikri farklı kelimelerle tekrar etme; her cümle yeni bilgi versin.',
       'Cümlelerde iki nokta (:) kullanma, numaralandırma yapma.',
       '',
       'Her cümle için üç alan yaz:',
       '- "narration": sadece seslendirilecek tam cümle. İçine "Kanca cümlesi:", "1)", "Sebep 2:"',
       '  gibi HİÇBİR etiket veya numara yazma. Cümle nokta/soru işareti ile bitsin.',
-      '- "visual_prompt": beyaz tahtaya çizilecek sahnenin somut tarifi (5-12 kelime).',
-      '  Cümlenin anlattığı olayı göster: kim/ne, ne yapıyor, nerede.',
-      '  Örnek: "buz küpünün üstünden su damlıyor", "iki yaka arasında köprü ve insanlar".',
-      '  Sadece tek nesne adı yazma (ör. yalnızca "güneş" yazma).',
+      '- "image_prompt": bu cümle için çizilecek TEK sahnenin tarifi (6-16 kelime).',
+      '  Cümlenin İÇİNDEKİ nesneleri say: kim/ne, ne yapıyor, nerede.',
+      '  Örnek: "3000 yıllık Mısır vazosu ve içindeki bal, masanın üstünde",',
+      '  "buz küpü güneşin altında eriyor, yanında su damlası".',
+      '  Sadece tek nesne adı yazma (ör. yalnızca "güneş" yazma); soyut kavram çizdirme.',
       '- "title": tahtaya yazılacak en fazla 3 kelimelik vurgu. Cümlede sayı varsa sayıyı',
       '  ("%40", "3 KAT"), yoksa cümledeki en önemli kelimeyi yaz ("KÖPRÜ"). Emin değilsen boş bırak.',
       '',
       'Yalnızca şu JSON biçimini döndür:',
-      '{"scenes":[{"narration":"...","visual_prompt":"...","title":"..."}]}'
+      '{"scenes":[{"narration":"...","image_prompt":"...","title":"..."}]}'
     ].join('\n');
 
     const raw = await this.call(prompt, {
@@ -391,7 +428,8 @@ export class ScriptAgent {
       'Mevcut cümleleri tekrarlama; yeni ayrıntı, örnek veya karşılaştırma ekle.',
       'Kapanış sorusunu tekrar yazma. Etiket ve numara kullanma.',
       '',
-      'Yalnızca JSON: {"scenes":[{"narration":"...","visual_prompt":"...","title":"..."}]}'
+      'Her cümlede yeni ve somut bir bilgi olsun (sayı, isim, neden-sonuç).',
+      'Yalnızca JSON: {"scenes":[{"narration":"...","image_prompt":"...","title":"..."}]}'
     ].join('\n');
 
     const raw = await this.call(prompt, { temperature: 0.9, numPredict: 800, label: 'ek cümleler' });
@@ -422,7 +460,7 @@ export class ScriptAgent {
           label = title;
         }
       }
-      let visualPrompt = scene.visualPrompt || '';
+      let visualPrompt = scene.imagePrompt || '';
       if (!visualPrompt) {
         visualPrompt = this.fallbackVisual(scene.narration, topic);
         fallbackCount += 1;
@@ -430,7 +468,7 @@ export class ScriptAgent {
 
       return {
         narration: scene.narration,
-        visualPrompt,
+        imagePrompt: visualPrompt,
         title: label
       };
     });
@@ -450,7 +488,8 @@ export class ScriptAgent {
       tags: outline.tags || [],
       narration,
       scenes,
-      sceneHints: scenes.map((scene) => scene.visualPrompt || null),
+      sceneHints: scenes.map((scene) => scene.imagePrompt || null),
+      imagePrompts: scenes.map((scene) => scene.imagePrompt || null),
       labels: scenes.map((scene) => scene.title || null),
       visualQueries: []
     };
@@ -502,7 +541,7 @@ export class ScriptAgent {
       if (closing.ok) {
         scenes.push({
           narration: closing.text,
-          visualPrompt: 'soru işareti ve meraklı yüzler',
+          imagePrompt: 'meraklı bir yüz ve büyük bir soru işareti',
           titleHint: ''
         });
       }
@@ -511,6 +550,10 @@ export class ScriptAgent {
       if (prefix) scenes = dedupeScenes(scenes);
       lastScript = this.buildScript(scenes, outline);
       const check = validateScript(lastScript.scenes);
+
+      if (check.warnings?.length) {
+        log('ScriptAgent', `Uyarı: ${check.warnings.join('; ')}`, 'WARN');
+      }
 
       if (check.ok) {
         log(

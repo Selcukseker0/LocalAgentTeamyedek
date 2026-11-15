@@ -46,8 +46,9 @@ seçer; aynı senaryo ikinci kez üretilmez:
    4. gerekirse ek sahne çağrısı.
 
    Her sahne üç alanlıdır: `narration` (seslendirilecek tam cümle),
-   `visual_prompt` (tahtaya çizilecek sahnenin tarifi), `title` (1-3 kelimelik
-   bant yazısı). Modelin döndürdüğü metin **render'dan önce otomatik denetlenir**
+   `image_prompt` (o cümle için çizilecek sahnenin tarifi), `title`
+   (1-3 kelimelik bant yazısı). Hedef **30-45 saniye** (87-128 kelime),
+   her cümle tek fikir ve somut bilgi (sayı, isim, neden-sonuç) taşır. Modelin döndürdüğü metin **render'dan önce otomatik denetlenir**
    (aşağıya bakın); denetim geçmezse senaryo 2 kez daha yazdırılır.
 
 4. Ses `edge-tts` ile üretilir ve **kelime kelime zaman damgası** alınır
@@ -127,6 +128,36 @@ node src/scripts/autoVideo.js --no-review
 Çıktı: `output/auto/<zaman damgası>-<konu>/shorts_whiteboard_<zaman damgası>.mp4`,
 yanında `preview.jpg`, `run_info.json` ve `youtube_metadata.json`.
 
+## Sahne görselleri (Flux / Imagen / gpt-image)
+
+Her cümle için **ayrı illüstrasyon** üretilebilir. Açmak için `.env`:
+
+```env
+IMAGE_PROVIDER=gemini            # openai | gemini | custom
+IMAGE_MODEL=imagen-3.0-generate-002
+GEMINI_API_KEY=...
+# openai: IMAGE_PROVIDER=openai, IMAGE_MODEL=gpt-image-1, OPENAI_API_KEY=...
+```
+
+- Stil prompt'u sabittir: *hand-drawn black marker line art, whiteboard doodle
+  style, centered composition, pure white background, simple flat marker
+  coloring (yellow, blue, orange)*. `IMAGE_STYLE_PROMPT` ile değiştirilebilir.
+- Prompt = sabit stil + sahnenin `image_prompt` alanı (cümledeki nesneler).
+- Görseller `output/.../images/scene_01.png ...` olarak saklanır; aynı klasörde
+  tekrar çalıştırılırsa yeniden üretilmez (önbellek).
+- **Anahtar yoksa veya üretim başarısız olursa** video durmaz: o sahne için
+  yerleşik çizim kompozisyonu kullanılır. Yani sistem ücretsiz de çalışır.
+- `IMAGE_PROVIDER=custom` + `IMAGE_API_URL` ile kendi ucuz API'niz bağlanır
+  (`POST {prompt}` → `{"image":"<base64>"}` veya `{"url":"..."}`).
+
+Render tarafında her illüstrasyon **çiziliyormuş gibi** açılır:
+
+1. Sahne süresinin ilk ~%68'inde siyah konturlar yukarıdan aşağıya maske ile
+   açılır; el (şeffaf arka planlı sprite) açılma sınırını takip eder.
+2. Kalan sürede renk katmanı soldan sağa fırça gibi süpürülür.
+3. Görsel genişliğin ~%86'sını kaplar, üstte bant yazısı ve altta altyazı için
+   boşluk bırakılır.
+
 ## Shorts video görünümü (beyaz tahta / keçeli kalem stili)
 
 Videolar stok klip yerine **beyaz kâğıt üzerine keçeli kalemle çizim** olarak
@@ -139,6 +170,8 @@ Akış:
 
 1. `WhiteboardVideoAgent` senaryoyu cümlelere böler ve süreleri TTS kelime
    zamanlarından çıkarır (yoksa altyazı ipuçları, en son tahmini süre).
+1b. `IMAGE_PROVIDER` açıksa `ImageAgent` her cümle için illüstrasyon üretir;
+   üretilemeyen sahneler aşağıdaki kompozisyon yoluna düşer.
 2. Her cümle için **1-3 nesnelik çizim kompozisyonu** planlanır: model cümleyi
    ve `visual_prompt`'u okur, katalogdan nesneleri seçip sayfaya yerleştirir
    (`{"type":"ice","x":0.42,"y":0.58,"size":0.45}`). Model yoksa anahtar

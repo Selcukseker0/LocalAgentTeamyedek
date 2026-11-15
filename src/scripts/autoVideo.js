@@ -161,6 +161,8 @@ async function main() {
   );
 
   // 4) Video
+  console.log(`🖼️  ${video.image.statusLine()}`);
+
   const fileName = `shorts_whiteboard_${ts}.mp4`;
   const manualScenes = (argValue('scenes') || '')
     .split(',')
@@ -194,6 +196,10 @@ async function main() {
   console.log(`   Süre: ${result.duration.toFixed(1)}s | Kare: ${result.frameCount} | ` +
     `Boyut: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
   console.log(`   Sahneler: ${(result.scenes || []).join(' → ')}`);
+  const runInfoPath = path.join(workDir, 'run_info.json');
+  const runInfo = JSON.parse(await fs.readFile(runInfoPath, 'utf8').catch(() => '{}'));
+  const usedImages = (runInfo.scene_plan || []).filter((plan) => plan.image).length;
+  console.log(`   Üretilmiş görsel: ${usedImages}/${(runInfo.scene_plan || []).length} sahne`);
   console.log(`   Önizleme: ${result.previewPath}`);
   console.log(`   Künye: ${metaPath}`);
   console.log(`   Toplam süre: ${((Date.now() - started) / 1000).toFixed(0)} sn`);
