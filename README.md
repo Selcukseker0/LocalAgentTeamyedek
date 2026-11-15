@@ -170,13 +170,21 @@ tanımlıdır:
 - Trend/ekonomi: `chart`, `money`, `shopping`, `factory`
 - Teknoloji/sağlık/çevre: `phone`, `shield`, `flame`, `cloud_rain`
 - Günlük hayat: `coffee`
-- Doğa/bilim: `sky`, `rainbow`, `planet`, `coffee`
+- Doğa/bilim: `sky`, `rainbow`, `planet`, `coffee`, `tree`, `thermometer`
+- Teknoloji/günlük: `lightbulb`, `battery`, `car`, `rocket`, `brain`, `map`
 
 `python src/whiteboard/render.py --list-scenes` komutu güncel listeyi verir.
 
 Bir sahne videoda en fazla 2 kez kullanılır; konu bir sahneyi doyurduğunda
-aynı görsel aileden (doğa, günlük hayat, bilim...) devam edilir, üst üste aynı
-sahne gelmez.
+aynı görsel aileden (doğa, günlük hayat, bilim...) anlamca en yakın sahne
+seçilir. Hiçbir sahneye uymayan cümlelerde videonun "konu sahnesi" (ör. kahve
+anlatımında kahve fincanı) kullanılır; rastgele çizim yapılmaz.
+
+Sahne seçim sırası: Ollama planı → cümlenin çizim ipucu → anahtar kelimeler →
+konu sahnesi → ailesi. Ollama'nın döndürdüğü Türkçe cevaplar ("vazo", "bal
+küpü") otomatik olarak katalog kimliğine çevrilir ve kısmi planlar da kabul
+edilir. Hangi cümlenin hangi sahneyi hangi kaynakla aldığı `run_info.json`
+içindeki `scene_plan` alanında görülür.
 
 Yeni sahne eklemek için aynı dosyada `scene_<isim>()` fonksiyonu yazıp
 `SCENES` sözlüğüne kaydedin; `SCENE_KEYWORDS` içine anahtar kelimeleri

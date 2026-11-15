@@ -33,6 +33,14 @@ SCENE_KEYWORDS = {
     "egyptian_vase": ["mısır", "misir", "mezar", "vazo", "antik", "firavun", "tarih", "arkeolog"],
     "honey_pot": ["bal", "tatlı", "tatli", "şeker", "seker", "reçel", "rec el"],
     "coffee": ["kahve", "çekirdek", "cekirdek", "fincan", "bardak", "kafein", "barista", "koku"],
+    "lightbulb": ["ampul", "fikir", "icat", "elektrik", "buluş", "bulus", "lamba", "ışık ver"],
+    "battery": ["pil", "batarya", "şarj", "sarj", "enerji depolar", "tüken", "tuken"],
+    "tree": ["ağaç", "agac", "orman", "oksijen", "yaprak", "doğa", "doga", "kök", "kok sal"],
+    "car": ["araba", "otomobil", "trafik", "yol", "sürücü", "surucu", "park", "lastik"],
+    "rocket": ["roket", "uzaya", "fırlat", "firlat", "hız", "hiz rekor", "keşif", "kesif"],
+    "brain": ["beyin", "düşünce", "dusunce", "hafıza", "hafiza", "öğren", "ogren", "zeka", "unut"],
+    "map": ["harita", "konum", "rota", "seyahat", "ülke", "ulke", "şehir", "sehir", "kıta", "kita"],
+    "thermometer": ["termometre", "sıcaklık", "sicaklik", "derece", "ateş", "ates", "ısı", "isi", "soğuk", "soguk", "iklim"],
     "milk_bread_honey": ["süt", "sut", "ekmek", "bozul", "bozuk", "gıda", "gida"],
     "water_drop": ["su", "damla", "nem", "ıslak", "islak", "kuruma"],
     "bacteria_honey": ["bakteri", "mikrop", "kurut", "öldür", "oldur", "hastalık", "hastalik"],
@@ -582,6 +590,146 @@ def scene_coffee():
     return s
 
 
+
+def scene_lightbulb():
+    """Ampul (fikir, elektrik, icat)."""
+    s = []
+    s.append((_ellipse(540, 820, 170, 170), HONEY, 0))
+    s.append((_ellipse(540, 820, 170, 170), BLACK, 13))
+    # duy (base)
+    s.append((_poly([(470, 980), (610, 980), (600, 1090), (480, 1090)]), BLACK, 12))
+    for y in (1020, 1060):
+        s.append((_line((482, y), (598, y), 12), BLACK, 8))
+    # filament
+    s.append(([(430, 850), (480, 780), (520, 860), (560, 780), (610, 850)], BLACK, 8))
+    s.append((_line((480, 780), (480, 950), 8), BLACK, 6))
+    s.append((_line((600, 780), (600, 950), 8), BLACK, 6))
+    # ışınlar
+    for a in range(-70, 71, 20):
+        rad = math.radians(a - 90)
+        s.append((_line((540 + 215 * math.cos(rad), 820 + 215 * math.sin(rad)),
+                        (540 + 300 * math.cos(rad), 820 + 300 * math.sin(rad)), 10), BLACK, 10))
+    return s
+
+
+def scene_battery():
+    """Pil / şarj (enerji, batarya, tükenme)."""
+    s = []
+    # Yatay pil gövdesi + artı kutup
+    s.append((_rect(220, 780, 820, 1140), BLACK, 14))
+    s.append((_rect(820, 880, 900, 1040), BLACK, 12))
+    # iç dolgu (enerji seviyesi)
+    s.append((_rect(250, 810, 760, 1110), GREEN, 0))
+    # " + " ve " - " işaretleri
+    s.append((_line((300, 700), (360, 700), 12), BLACK, 10))
+    s.append((_line((330, 670), (330, 730), 12), BLACK, 10))
+    s.append((_line((300, 1210), (360, 1210), 12), BLACK, 10))
+    # şimşek (şarj)
+    bolt = [(560, 800), (470, 970), (545, 970), (505, 1120), (650, 930), (570, 930)]
+    s.append((_poly(bolt), HONEY, 0))
+    s.append((_poly(bolt), BLACK, 10))
+    return s
+
+
+def scene_tree():
+    """Ağaç (doğa, orman, oksijen, çevre)."""
+    s = [(_poly([(500, 1400), (520, 1080), (560, 1080), (580, 1400)]), BREAD_DARK, 0),
+         (_poly([(500, 1400), (520, 1080), (560, 1080), (580, 1400)]), BLACK, 12)]
+    for cx, cy, r in [(430, 900, 150), (650, 900, 150), (540, 760, 170), (540, 980, 130)]:
+        s.append((_ellipse(cx, cy, r, r * 0.85), GREEN, 0))
+        s.append((_ellipse(cx, cy, r, r * 0.85), BLACK, 11))
+    s.append((_line((360, 1430), (720, 1430), 20), BLACK, 12))
+    return s
+
+
+def scene_car():
+    """Araba (ulaşım, kış, yol, trafik)."""
+    s = [(_poly([(220, 1080), (260, 940), (380, 920), (450, 820), (700, 820),
+                 (790, 920), (880, 940), (900, 1080)]), SKY, 0),
+         (_poly([(220, 1080), (260, 940), (380, 920), (450, 820), (700, 820),
+                 (790, 920), (880, 940), (900, 1080)]), BLACK, 13),
+         (_ellipse(400, 1090, 80, 80), BLACK, 12),
+         (_ellipse(760, 1090, 80, 80), BLACK, 12),
+         (_ellipse(400, 1090, 34, 34), GRAY, 0),
+         (_ellipse(760, 1090, 34, 34), GRAY, 0),
+         (_poly([(470, 900), (520, 840), (640, 840), (640, 900)]), (235, 238, 240), 0),
+         (_poly([(470, 900), (520, 840), (640, 840), (640, 900)]), BLACK, 9),
+         (_line((200, 1150), (920, 1150), 30), BLACK, 10)]
+    return s
+
+
+def scene_rocket():
+    """Roket (uzay, hız, teknoloji, keşif)."""
+    s = [(_poly([(540, 520), (620, 700), (620, 1120), (460, 1120), (460, 700)]), (235, 238, 240), 0),
+         (_poly([(540, 520), (620, 700), (620, 1120), (460, 1120), (460, 700)]), BLACK, 13)]
+    s.append((_ellipse(540, 820, 60, 60), SKY, 0))
+    s.append((_ellipse(540, 820, 60, 60), BLACK, 10))
+    s.append((_poly([(460, 960), (360, 1120), (460, 1100)]), RED, 0))
+    s.append((_poly([(460, 960), (360, 1120), (460, 1100)]), BLACK, 11))
+    s.append((_poly([(620, 960), (720, 1120), (620, 1100)]), RED, 0))
+    s.append((_poly([(620, 960), (720, 1120), (620, 1100)]), BLACK, 11))
+    flame = [(500, 1120), (540, 1300), (580, 1120)]
+    s.append((flame, HONEY, 0))
+    s.append((flame, BLACK, 10))
+    return s
+
+
+def scene_brain():
+    """Beyin (düşünce, öğrenme, hafıza)."""
+    s = []
+    left = _bezier((540, 640), (380, 600), (300, 800), (400, 900), 20)
+    left += _bezier((400, 900), (320, 1000), (420, 1180), (540, 1120), 20)
+    right = _bezier((540, 640), (700, 600), (780, 800), (680, 900), 20)
+    right += _bezier((680, 900), (760, 1000), (660, 1180), (540, 1120), 20)
+    s.append((left, (238, 206, 208), 0))
+    s.append((right, (238, 206, 208), 0))
+    s.append((left + right, BLACK, 14))
+    s.append((_line((540, 650), (540, 1110), 26), BLACK, 10))
+    squiggle = []
+    for i in range(0, 40):
+        squiggle.append((420 + 8 * i, 820 + 55 * math.sin(i / 2.4)))
+    s.append((squiggle, BLACK, 8))
+    squiggle2 = [(x + 20, y + 150) for x, y in squiggle]
+    s.append(([(x - 40, y) for x, y in squiggle2], BLACK, 8))
+    return s
+
+
+def scene_map():
+    """Harita (yol, konum, seyahat, keşif)."""
+    s = [(_poly([(180, 760), (420, 690), (660, 770), (900, 700), (900, 1220),
+                 (660, 1290), (420, 1210), (180, 1280)]), (243, 240, 232), 0),
+         (_poly([(180, 760), (420, 690), (660, 770), (900, 700), (900, 1220),
+                 (660, 1290), (420, 1210), (180, 1280)]), BLACK, 13),
+         (_line((420, 700), (420, 1205), 20), BLACK, 9),
+         (_line((660, 775), (660, 1285), 20), BLACK, 9)]
+    # rota: yumuşak bir eğri
+    route = _bezier((250, 1180), (380, 1120), (420, 1000), (540, 980), 18)
+    route += _bezier((540, 980), (660, 960), (700, 900), (800, 870), 18)
+    s.append((route, RED, 0))
+    s.append((route, BLACK, 8))
+    # konum iğnesi (damla biçimi) + iç nokta
+    pin = _bezier((800, 700), (720, 700), (700, 790), (760, 840), 16)
+    pin += _bezier((760, 840), (810, 800), (860, 760), (800, 700), 16)
+    s.append((pin, RED, 0))
+    s.append((pin, BLACK, 10))
+    s.append((_ellipse(795, 760, 22, 22), (243, 240, 232), 0))
+    s.append((_ellipse(795, 760, 22, 22), BLACK, 8))
+    return s
+
+
+def scene_thermometer():
+    """Termometre (sıcaklık, ateş, iklim)."""
+    s = [(_ellipse(540, 1180, 90, 90), RED, 0),
+         (_ellipse(540, 1180, 90, 90), BLACK, 12),
+         (_poly([(490, 1120), (490, 640), (590, 640), (590, 1120)]), (240, 240, 240), 0),
+         (_poly([(490, 1120), (490, 640), (590, 640), (590, 1120)]), BLACK, 12),
+         (_poly([(515, 1100), (515, 700), (565, 700), (565, 1100)]), RED, 0)]
+    for i in range(6):
+        y = 700 + i * 78
+        s.append((_line((600, y), (650, y), 8), BLACK, 7))
+    return s
+
+
 SCENES = {
     "egyptian_vase": scene_egyptian_vase,
     "honey_pot": scene_honey_pot,
@@ -609,6 +757,14 @@ SCENES = {
     "rainbow": scene_rainbow,
     "planet": scene_planet,
     "coffee": scene_coffee,
+    "lightbulb": scene_lightbulb,
+    "battery": scene_battery,
+    "tree": scene_tree,
+    "car": scene_car,
+    "rocket": scene_rocket,
+    "brain": scene_brain,
+    "map": scene_map,
+    "thermometer": scene_thermometer,
     "generic": scene_generic,
 }
 

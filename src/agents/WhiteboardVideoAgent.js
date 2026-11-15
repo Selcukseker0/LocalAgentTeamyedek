@@ -48,6 +48,14 @@ const SCENE_HINTS = {
   rainbow: 'Gökkuşağı (renk, ışık, spektrum)',
   planet: 'Gezegen / dünya (uzay, astronomi, yıldız)',
   coffee: 'Kahve fincanı ve çekirdek (kahve, kafein, sabah rutini)',
+  lightbulb: 'Ampul (fikir, icat, elektrik, buluş)',
+  battery: 'Pil / şarj (enerji, batarya, tükenme)',
+  tree: 'Ağaç (doğa, orman, oksijen, çevre)',
+  car: 'Araba (ulaşım, yol, trafik, kış)',
+  rocket: 'Roket (uzay, fırlatma, hız, keşif)',
+  brain: 'Beyin (düşünce, hafıza, öğrenme, zeka)',
+  map: 'Harita ve konum iğnesi (yol, seyahat, ülke)',
+  thermometer: 'Termometre (sıcaklık, ateş, soğuk, iklim)',
   shopping: 'Alışveriş çantası (fiyat, tüketim)',
   generic: 'Konuya uymayan nötr çizim'
 };
@@ -184,35 +192,165 @@ export class WhiteboardVideoAgent {
   }
 
   /** Ollama ile her cümleye beyaz tahta sahnesi atar (başarısızsa anahtar kelime). */
-  async planScenes(timeline, availableScenes = SCENE_IDS) {
+  /**
+   * Cümle → sahne zincirini kurar.
+   * Sıra: Ollama planı → cümle ipucu → metin anahtar kelimeleri → konu sahnesi → dolgu.
+   * @returns {{sceneIds: string[], sceneSources: string[]}}
+   */
+  async planSceneChain(timeline, { hints = null, topic = '', scenes = null } = {}) {
+    if (Array.isArray(scenes) && scenes.length) {
+      const sceneIds = timeline.map((_item, i) => scenes[i % scenes.length]);
+      return { sceneIds, sceneSources: sceneIds.map(() => 'elle') };
+    }
+
+    const available = await this.listScenes();
+    const hintList = Array.isArray(hints) && hints.length === timeline.length ? hints : null;
+    const planned = await this.planScenes(timeline, available, hintList);
+    const anchor = this.pickAnchor(
+      timeline.map((item, i) => `${hintList ? hintList[i] : ''} ${item.text}`),
+      topic
+    );
+
+    const sceneIds = [];
+    const sceneSources = [];
+    const usage = new Map();
+    const useCount = (candidate) => usage.get(candidate) || 0;
+
+    for (let i = 0; i < timeline.length; i++) {
+      const previous = sceneIds[i - 1] || null;
+      let id = planned[i];
+      let source = id ? 'ollama' : null;
+
+      const hintRanked = this.scoreScenes(hintList ? hintList[i] : timeline[i].text);
+      const textRanked = hintList && hintList[i] !== timeline[i].text
+        ? this.scoreScenes(timeline[i].text)
+        : [];
+      const ranked = [...new Set([...hintRanked, ...textRanked])];
+
+      if (id && useCount(id) >= 3) {
+        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
+        if (alternative) {
+          id = alternative;
+          source = 'anahtar kelime';
+        } else {
+          id = this.relatedScene(id, usage, previous) || id;
+          source = 'ilgili sahne';
+        }
+      }
+
+      if (!id) {
+        const fresh = ranked.find((candidate) => candidate !== previous && useCount(candidate) < 2) ||
+          ranked.find((candidate) => useCount(candidate) < 2);
+
+        if (fresh) {
+          id = fresh;
+          source = 'anahtar kelime';
+        } else if (ranked.length) {
+          id = this.relatedScene(ranked[0], usage, previous) || ranked[0];
+          source = 'ilgili sahne';
+        } else if (anchor && useCount(anchor) < 3) {
+          // Konu sahnesi üst üste gelmesin: mümkünse ailesinden devam
+          const alternative = anchor === previous
+            ? this.relatedScene(anchor, usage, previous)
+            : null;
+          id = alternative || anchor;
+          source = alternative ? 'konu ailesi' : 'konu';
+        } else if (anchor) {
+          id = this.relatedScene(anchor, usage, previous) || anchor;
+          source = 'konu ailesi';
+        } else {
+          id = useCount('question') < 2 ? 'question' : 'book';
+          source = 'dolgu';
+        }
+      }
+
+      usage.set(id, useCount(id) + 1);
+      sceneIds.push(id);
+      sceneSources.push(source);
+    }
+
+    const fromModel = sceneSources.filter((item) => item === 'ollama').length;
+    log2(
+      `Sahne kaynağı: ${fromModel}/${timeline.length} Ollama, ` +
+      `${timeline.length - fromModel} yedek eşleme` +
+      (anchor ? ` (konu sahnesi: ${anchor})` : '')
+    );
+
+    return { sceneIds, sceneSources };
+  }
+
+  /** Modelin döndürdüğü serbest metni katalogdaki sahne kimliğine çevirir. */
+  normalizeSceneId(value, available) {
+    if (value === null || value === undefined) return null;
+    const raw = String(value).trim().toLocaleLowerCase('tr');
+    if (!raw) return null;
+    if (available.includes(raw)) return raw;
+
+    const snake = raw.replace(/[\s-]+/g, '_').replace(/[^a-z_]/g, '');
+    if (available.includes(snake)) return snake;
+
+    // "vazo", "bal küpü", "ampul" gibi Türkçe cevaplar → anahtar kelime eşlemesi
+    const ranked = this.scoreScenes(raw).filter((id) => available.includes(id));
+    return ranked[0] || null;
+  }
+
+  /** Videoda tekrar eden "konu sahnesi": eşleşmeyen cümlelerde bu kullanılır. */
+  pickAnchor(texts, topicText = '') {
+    const counts = new Map();
+    const add = (text, weight) => {
+      const ranked = this.scoreScenes(text);
+      ranked.slice(0, 2).forEach((id, i) => {
+        counts.set(id, (counts.get(id) || 0) + (i === 0 ? weight : weight * 0.5));
+      });
+    };
+
+    if (topicText) add(topicText, 3);
+    for (const text of texts) add(text, 1);
+
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    return best ? best[0] : null;
+  }
+
+  async planScenes(timeline, availableScenes = SCENE_IDS, hints = null) {
     if (timeline.length === 0) return [];
     const catalog = availableScenes
       .map((id) => `- ${id}: ${SCENE_HINTS[id] || 'serbest çizim'}`)
       .join('\n');
 
+    const hintBlock = Array.isArray(hints)
+      ? `\nYazarın cümle başına önerdiği çizimler (bunları tercih et):\n${hints
+        .map((hint, i) => `${i + 1}. ${hint}`)
+        .join('\n')}\n`
+      : '';
+
     try {
       const result = await askOllama({
         system: 'Sen bir çizim yönetmenisin. Yalnızca istenen JSON nesnesini döndür.',
-        prompt: `Elimde beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
-Her cümle için en uygun sahneyi seç. Cümle sırasını koru, sahne sayısı cümle sayısına eşit olsun.
+        prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
+Her cümle için katalogdan EN UYGUN sahneyi seç. Sahne kimliğini katalogdaki gibi yaz.
+Cümle sırasını koru, sahne sayısı cümle sayısına eşit olsun.
 Katalog:\n${catalog}
-
+${hintBlock}
 Cümleler:
 ${timeline.map((item, i) => `${i + 1}. ${item.text}`).join('\n')}
 
 Yalnızca şu JSON biçimini döndür:
 {"scenes":[{"index":1,"scene":"<katalogdaki kimlik>"}, ...]}`,
         json: true,
-        temperature: 0.1
+        temperature: 0.1,
+        numPredict: 700
       });
 
       const planned = Array.isArray(result?.scenes) ? result.scenes : [];
-      const byIndex = new Map(
-        planned
-          .filter((p) => availableScenes.includes(p?.scene))
-          .map((p) => [Number(p.index), p.scene])
-      );
-      if (byIndex.size >= Math.ceil(timeline.length / 2)) {
+      const byIndex = new Map();
+      for (const item of planned) {
+        const index = Number(item?.index ?? item?.i ?? item?.sentence);
+        const id = this.normalizeSceneId(item?.scene ?? item?.id, availableScenes);
+        if (Number.isFinite(index) && id) byIndex.set(index, id);
+      }
+
+      if (byIndex.size > 0) {
+        // Kısmi plan da işe yarar; eksikler yedek eşleme ile tamamlanır
         return timeline.map((_item, i) => byIndex.get(i + 1) || null);
       }
     } catch (err) {
@@ -228,7 +366,9 @@ Yalnızca şu JSON biçimini döndür:
     ['science', ['bacteria_honey', 'chart', 'book', 'planet', 'rainbow', 'clock']],
     ['daily', ['house', 'phone', 'money', 'shopping', 'book', 'milk_bread_honey']],
     ['human', ['heart', 'shield', 'clock', 'question']],
-    ['industry', ['factory', 'money', 'chart', 'shopping', 'shield', 'check', 'cross']]
+    ['industry', ['factory', 'money', 'chart', 'shopping', 'shield', 'check', 'cross']],
+    ['tech', ['lightbulb', 'battery', 'phone', 'chart', 'rocket', 'car', 'factory']],
+    ['life', ['brain', 'book', 'thermometer', 'heart', 'map', 'tree', 'house']]
   ];
 
   /** Sahne yoksa anahtar kelime eşlemesi (Türkçe ekleri tolere eder). */
@@ -244,10 +384,18 @@ Yalnızca şu JSON biçimini döndür:
       ['sun', ['güneş', 'gunes', 'sıcak', 'sicak', 'yaz', 'ışın', 'isin', 'parlak']],
       ['sky', ['gökyüzü', 'gokyuzu', 'ufuk', 'gündüz', 'gunduz', 'mavi', 'hava']],
       ['rainbow', ['gökkuşağı', 'gokkusagi', 'renk', 'spektrum', 'ışık', 'isik', 'tayf']],
-      ['coffee', ['kahve', 'çekirdek', 'cekirdek', 'fincan', 'bardak', 'kafein', 'barista', 'koku', 'sabah', 'kavur']],
+      ['coffee', ['kahve', 'çekirdek', 'cekirdek', 'fincan', 'bardak', 'kafein', 'barista', 'kavur']],
+      ['lightbulb', ['ampul', 'fikir', 'icat', 'buluş', 'bulus', 'lamba', 'elektrik', 'aydınlat']],
+      ['battery', ['pil', 'batarya', 'şarj', 'sarj', 'tüken', 'tuken', 'enerji depol']],
+      ['tree', ['ağaç', 'agac', 'orman', 'oksijen', 'yaprak', 'kök', 'kok sal', 'fotosentez']],
+      ['car', ['araba', 'otomobil', 'trafik', 'sürücü', 'surucu', 'lastik', 'otopark', 'motorlu']],
+      ['rocket', ['roket', 'fırlat', 'firlat', 'uçuş', 'ucus', 'keşif', 'kesif', 'yerçekim', 'yercekim']],
+      ['brain', ['beyin', 'düşünce', 'dusunce', 'hafıza', 'hafiza', 'öğren', 'ogren', 'zeka', 'unut']],
+      ['map', ['harita', 'konum', 'rota', 'seyahat', 'şehir', 'sehir', 'kıta', 'kita', 'ülke', 'ulke']],
+      ['thermometer', ['termometre', 'sıcaklık', 'sicaklik', 'derece', 'ateş', 'ates', 'ısı', 'isi', 'soğuk', 'soguk', 'ısın', 'isin']],
       ['planet', ['gezegen', 'dünya', 'dunya', 'uzay', 'mars', 'yıldız', 'yildiz', 'astronot', 'ay']],
-      ['house', ['ev', 'konut', 'kira', 'emlak', 'aile', 'kapı', 'kapi', 'araba', 'bina', 'oda', 'mutfak']],
-      ['check', ['doğru', 'dogru', 'tamam', 'onay', 'çözüm', 'cozum', 'başarı', 'basari']],
+      ['house', ['ev', 'konut', 'kira', 'emlak', 'aile', 'kapı', 'kapi', 'bina', 'oda', 'mutfak']],
+      ['check', ['doğru', 'dogru', 'onay', 'çözüm', 'cozum', 'başarı', 'basari']],
       ['cross', ['yanlış', 'yanlis', 'hata', 'risk', 'tehlike', 'zarar', 'yasak']],
       ['heart', ['kalp', 'sevgi', 'sağlık', 'saglik', 'duygu']],
       ['money', ['para', 'fiyat', 'ekonomi', 'zengin', 'maaş', 'maas']],
@@ -266,7 +414,11 @@ Yalnızca şu JSON biçimini döndür:
     const scored = rules.map(([id, keywords]) => {
       const score = keywords.reduce((sum, kw) => {
         const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = new RegExp(`(?<![\\p{L}])${escaped}`, 'iu');
+        // Kısa kelimeler (ev, su, ay...) tam kelime olarak aranır: "evre" ≠ "ev".
+        // Uzun kelimelerde Türkçe eklerine izin verilir: "kahvehaneler" = "kahve".
+        const pattern = kw.length <= 3
+          ? new RegExp(`(?<![\\p{L}])${escaped}(?![\\p{L}])`, 'iu')
+          : new RegExp(`(?<![\\p{L}])${escaped}[\\p{L}]{0,6}(?![\\p{L}])`, 'iu');
         return sum + (pattern.test(t) ? 1 : 0);
       }, 0);
       return { id, score };
@@ -292,9 +444,16 @@ Yalnızca şu JSON biçimini döndür:
     const families = WhiteboardVideoAgent.SCENE_FAMILIES;
     const family = families.find(([, list]) => list.includes(id));
     const pool = family ? family[1] : families[3][1];
+    const center = pool.indexOf(id);
     const candidates = pool
-      .filter((candidate) => candidate !== previous)
-      .sort((a, b) => (usage.get(a) || 0) - (usage.get(b) || 0));
+      .map((candidate, order) => ({ candidate, order }))
+      .filter(({ candidate }) => candidate !== previous)
+      // Önce aynı ailede anlamca en yakın sahne, sonra az kullanılan
+      .sort((a, b) =>
+        Math.abs(a.order - center) - Math.abs(b.order - center) ||
+        (usage.get(a.candidate) || 0) - (usage.get(b.candidate) || 0)
+      )
+      .map(({ candidate }) => candidate);
     return candidates.find((candidate) => (usage.get(candidate) || 0) < 2) || candidates[0] || null;
   }
 
@@ -380,7 +539,7 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
    */
   async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
-    sceneHints = null, fileName = 'shorts_whiteboard.mp4' }) {
+    sceneHints = null, topic = '', fileName = 'shorts_whiteboard.mp4' }) {
     // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
     await fs.rm(framesDir, { recursive: true, force: true });
@@ -399,48 +558,11 @@ Yalnızca şu JSON biçimini döndür:
     const sentences = splitSentences(narration);
     const timeline = buildTimeline(sentences, cues, duration);
 
-    let sceneIds;
-    if (Array.isArray(scenes) && scenes.length) {
-      sceneIds = scenes;
-    } else {
-      const available = await this.listScenes();
-      const planned = await this.planScenes(timeline, available);
-      const hints = Array.isArray(sceneHints) && sceneHints.length === timeline.length
-        ? sceneHints
-        : null;
-      sceneIds = [];
-      const usage = new Map();
-
-      for (let i = 0; i < timeline.length; i++) {
-        const previous = sceneIds[i - 1] || null;
-        let id = planned[i];
-
-        const ranked = this.scoreScenes(hints ? hints[i] : timeline[i].text);
-        const useCount = (candidate) => usage.get(candidate) || 0;
-
-        if (!id) {
-          if (ranked.length === 0) {
-            // Konu hiçbir sahneye uymadı: soru işareti, doyarsa sakin bir dolgu sahnesi
-            id = useCount('question') < 2
-              ? 'question'
-              : ['book', 'chart', 'sky', 'cloud_rain', 'sun'].find((c) => useCount(c) < 2) || 'question';
-          } else {
-            // Aynı sahne üst üste gelmesin, videoda en fazla 2 kez kullanılsın
-            id = ranked.find((candidate) => candidate !== previous && useCount(candidate) < 2) ||
-              this.relatedScene(ranked[0], usage, previous) ||
-              ranked.find((candidate) => useCount(candidate) < 2) ||
-              ranked[0];
-          }
-        } else if (useCount(id) >= 3) {
-          // Ollama aynı sahneyi çok tekrar ettirdiyse alternatife geç
-          id = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2) ||
-            (previous === 'question' ? 'generic' : 'question');
-        }
-
-        usage.set(id, useCount(id) + 1);
-        sceneIds.push(id);
-      }
-    }
+    const { sceneIds, sceneSources } = await this.planSceneChain(timeline, {
+      hints: sceneHints,
+      topic: topic || narration,
+      scenes
+    });
 
     const manifest = {
       fps: FPS,
@@ -475,8 +597,15 @@ Yalnızca şu JSON biçimini döndür:
 
     const finalDuration = frames.length / FPS;
     const runInfo = await this.writeRunInfo(workDir, {
+      topic: topic || null,
       video: path.basename(finalPath),
       scenes: manifest.scenes.map((sc) => sc.id),
+      scene_plan: manifest.scenes.map((sc, i) => ({
+        index: i + 1,
+        text: sc.text,
+        scene: sc.id,
+        source: sceneSources[i] || 'bilinmiyor'
+      })),
       sentences: manifest.scenes.map((sc) => sc.text),
       frameCount: frames.length,
       duration: Number(finalDuration.toFixed(2)),
