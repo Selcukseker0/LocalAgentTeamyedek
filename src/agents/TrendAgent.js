@@ -49,7 +49,10 @@ const EVERGREEN_TOPICS = [
 ];
 
 // İngilizce başlıklar (Reddit/TIL) olduğu gibi konu seçilmesin
-const ENGLISH_HINTS = /\b(the|that|this|was|were|and|with|from|people|about|when|they|which|after|before|over|into|his|her|their|until|ended)\b/i;
+const ENGLISH_HINTS = /\b(the|that|this|was|were|and|with|from|people|about|when|they|which|after|before|over|into|his|her|their|until|ended|secret|story|stories|world|life|lives|king|queen|famous|history|hidden|truth|reason|power|money|game|night|party|hotel|death|murder|gold|war|love|best|worst|weird|strange|city|food|water|sleep|dream|man|woman|body|brain|human|science|space|earth|animal|stone|ship|plane|car|house|school|doctor|music|movie|film|singer|actor|president|army|soldier|balloon|jumping|lethal|accidents|trend|fad|popular|ancient|roman|greek|daily|first|last|great)\b/i;
+
+// Türkçe soru/kip işaretleri: konu Türkçe yazılmamışsa burada da eşleşmez
+const TURKISH_MARKERS = /\b(neden|nasıl|niçin|hangi|kaç|kim|nerede|midir|mıdır|mudur|müdür|gerçek|sır|sırrı|hikaye|hikayesi|tarihi|aslında)\b/i;
 
 const CATEGORIES = [
   'teknoloji',
@@ -135,7 +138,18 @@ export class TrendAgent {
     const text = String(topic || '').trim();
     if (text.length < 12 || text.length > 90) return false;
     if (text.split(/\s+/).length > 14) return false;
-    if (ENGLISH_HINTS.test(text) && !/[ğüşıöç]/i.test(text)) return false;
+
+    const hasTurkishChars = /[ğüşıöç]/i.test(text);
+    const hasTurkishMarker = TURKISH_MARKERS.test(text);
+    const hasEnglish = ENGLISH_HINTS.test(text);
+
+    // Hiç Türkçe karakter ve Türkçe kalıp yoksa ("Elvis'in Las Vegas secret") reddet
+    if (!hasTurkishChars && !hasTurkishMarker) return false;
+    // İngilizce kelime + Türkçe karakter yoksa reddet
+    if (hasEnglish && !hasTurkishChars) return false;
+    // İngilizce kelimeyle karışmış başlık ("... Las Vegas secret") reddet
+    if (hasEnglish && hasTurkishChars) return false;
+
     return true;
   }
 
