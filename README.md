@@ -132,6 +132,33 @@ node src/scripts/autoVideo.js --no-review
 Çıktı: `output/auto/<zaman damgası>-<konu>/shorts_whiteboard_<zaman damgası>.mp4`,
 yanında `preview.jpg`, `run_info.json` ve `youtube_metadata.json`.
 
+## Çizilebilir senaryo + görsel doğrulama
+
+Görselin cümleyi anlatması iki şeye bağlı: **cümlenin çizilebilir olması** ve **görselin
+doğrulanması**. İkisi de otomatik:
+
+1. **Araştırma** (`src/agents/ResearchAgent.js`) — Wikipedia TR + EN maddesinden kaynak metin
+   çekilir, model bu metinden 6-8 **somut olgu** çıkarır (sayı, yer, isim, neden-sonuç).
+   Metinde karşılığı olmayan olgu elenir → **halüsinasyon yok**. `RESEARCH_ENABLED=0` ile kapanır.
+2. **Çizilebilir script** (`ScriptAgent`) — her sahne `{narration, visual_objects, image_prompt}`.
+   Kural: cümlede en az bir somut isim; `gizemli, ilginç, harika, inanılmaz, şaşırtıcı…` gibi
+   soyut kelimeler **doğrulamada hata** sayılır. Cümle 8-14 kelime, 2-4 saniye.
+3. **Editör geçişi** — render'dan önce ayrı bir LLM turu senaryoyu 1-10 puanlar (soyut kelime,
+   tekrar, kaynak uyumu, hook). `SCRIPT_MIN_SCORE` (varsayılan 7) altındaysa bir kez daha yazılır.
+4. **Görsel doğrulama** (`src/agents/VisionAgent.js`) — üretilen görsel + cümle modele gösterilir:
+   `{"score": 7, "missing": [...]}`. Puan `IMAGE_VISION_PASS` altındaysa **eksik nesneler
+   prompt'a eklenip yeniden üretilir** (en fazla `IMAGE_MAX_ATTEMPTS`, varsayılan 3).
+   Aynı görsel iki sahnede çıkarsa (hash) yeni kompozisyon istenir.
+
+```env
+VISION_PROVIDER=gemini      # gemini | openai | custom (yerel)
+VISION_MODEL=gemini-2.0-flash
+IMAGE_MAX_ATTEMPTS=3
+IMAGE_VISION_PASS=7
+```
+
+Vision anahtarı yoksa doğrulama atlanır, üretim devam eder.
+
 ## Sahne görselleri (Flux / Imagen / gpt-image)
 
 Her cümle için **ayrı illüstrasyon** üretilebilir. Açmak için `.env`:
@@ -146,7 +173,8 @@ GEMINI_API_KEY=...
 - Stil prompt'u sabittir: *hand-drawn black marker line art, whiteboard doodle
   style, centered composition, pure white background, simple flat marker
   coloring (yellow, blue, orange)*. `IMAGE_STYLE_PROMPT` ile değiştirilebilir.
-- Prompt = sabit stil + sahnenin `image_prompt` alanı (cümledeki nesneler).
+- Prompt = sabit stil + `image_prompt` + `visual_objects` ("Must clearly show: ...").
+  Stil ekinde **`no text`** vardır: görsel modeller Türkçe yazıyı bozuk üretiyor.
 - Görseller `output/.../images/scene_01.png ...` olarak saklanır; aynı klasörde
   tekrar çalıştırılırsa yeniden üretilmez (önbellek).
 - **Anahtar yoksa veya üretim başarısız olursa** video durmaz: o sahne için

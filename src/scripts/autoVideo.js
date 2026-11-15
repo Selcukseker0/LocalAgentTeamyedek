@@ -120,9 +120,13 @@ async function main() {
     const research = await researchAgent.research(topicObj.topic);
     if (research.facts.length) {
       console.log(
-        `🔎 Araştırma: ${research.facts.length} bilgi ` +
+        `🔎 Araştırma: ${research.facts.length} doğrulanmış bilgi, ` +
+        `${research.sources?.length || 1} kaynak ` +
         `(${research.title || topicObj.topic}, ${((Date.now() - researchStart) / 1000).toFixed(0)} sn)`
       );
+      research.facts.slice(0, 4).forEach((fact) => console.log(`   • ${fact}`));
+    } else {
+      console.log('🔎 Araştırma: kaynak bulunamadı, senaryo modelin bilgisiyle yazılacak.');
     }
 
     const t0 = Date.now();
@@ -137,7 +141,11 @@ async function main() {
     console.log('🎬 Sahne taslağı:');
     scriptObj.scenes.slice(0, 20).forEach((scene, index) => {
       console.log(`   ${String(index + 1).padStart(2)}. ${scene.narration}`);
-      console.log(`       çizim: ${scene.visualPrompt || '-'}  | bant: ${scene.title || '-'}`);
+      const objects = Array.isArray(scene.visualObjects) && scene.visualObjects.length
+        ? scene.visualObjects.join(', ')
+        : '-';
+      console.log(`       nesneler: ${objects}`);
+      console.log(`       çizim: ${scene.imagePrompt || '-'}  | bant: ${scene.title || '-'}`);
     });
     console.log('');
   }
@@ -183,6 +191,7 @@ async function main() {
     narration: scriptObj.narration,
     sceneHints: scriptObj.sceneHints,
     sceneLabels: scriptObj.labels,
+    sceneObjects: scriptObj.sceneObjects || null,
     words: voiceResult.words || null,
     topic: topicObj.topic,
     scenes: manualScenes.length ? manualScenes : null,

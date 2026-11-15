@@ -3,6 +3,21 @@
 Bu dosya, çizimlerin nereden geldiğini ve neden "rastgele ikon" gibi göründüğünü anlatır.
 Başka bir modele (Claude vb.) danışmak için dosyanın sonundaki **brief**'i olduğu gibi kopyalayabilirsin.
 
+## 0. Nerede kaldık (v5)
+
+Teşhis doğruydu: sorun görsel modelinde değil, **cümlenin çizilebilir olmaması** ve
+**görselin doğrulanmaması**. v5'te şunlar eklendi:
+
+| Adım | Dosya | Ne yapıyor |
+|---|---|---|
+| Kaynak toplama | `src/agents/ResearchAgent.js` | Wikipedia TR + EN → kaynak metin → 6-8 somut olgu (kaynakta olmayan elenir) |
+| Çizilebilir script | `src/agents/ScriptAgent.js` | `visual_objects` alanı, soyut kelime yasağı, 8-14 kelime, tek bilgi |
+| Editör geçişi | `ScriptAgent.critiqueScript()` | 1-10 puan; `SCRIPT_MIN_SCORE` altındaysa yeniden yaz |
+| Görsel + onarım | `src/agents/ImageAgent.js` | prompt = stil + `image_prompt` + nesneler; aynı görsel çıkarsa yeni kompozisyon |
+| Vision doğrulama | `src/agents/VisionAgent.js` | görsel + cümle → puan + eksik nesneler → prompt düzelt → yeniden üret |
+
+Katalog yolu **hâlâ yedek**: anahtar yoksa veya görsel üretilemezse video durmuyor.
+
 ## 1. İki ayrı çizim yolu var
 
 ```
@@ -84,7 +99,18 @@ insanın buzu eritmesi) hiç üretilmiyor, çünkü katalogda böyle bir sahne y
 
 Bu yol kod olarak hazır ve test edildi; **tek eksik API anahtarı**.
 
-## 4. Seçenekler (Claude'a sorarken karşılaştırma tablosu)
+## 4. Kalan karar: hangi görsel sağlayıcı?
+
+İki yol hazır, seçim maliyet/kalite meselesi. (v5 ile script ve doğrulama katmanı ikisinde de aynı.)
+
+| Yol | Anahtar/kurulum | Kalite | Maliyet | Durum |
+|---|---|---|---|---|
+| **A. Imagen / gpt-image** | `GEMINI_API_KEY` / `OPENAI_API_KEY` | Yüksek — cümleye özel illüstrasyon | ~$0.02-0.05/görsel → video başına ~$0.3-0.7 | **kod hazır** |
+| **B. Yerel difüzyon** (Flux schnell / SDXL) | Model indirme | Yüksek-orta | Ücretsiz | kurulmadı |
+| **C. Prosedürel DSL** (LLM stroke üretsin) | Yok | Orta | Ücretsiz | kurulmadı |
+| **D. Kataloğu büyütmek** | — | Düşük | — | çıkmaz sokak (denendi) |
+
+Eski karşılaştırma tablosu (referans olsun diye):
 
 | Yol | Anahtar/kurulum | Kalite | Maliyet | Emek |
 |---|---|---|---|---|

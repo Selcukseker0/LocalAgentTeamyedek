@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { log } from '../logger.js';
 import { askLLM } from '../llm/provider.js';
 import { ImageAgent } from './ImageAgent.js';
+import { VisionAgent } from './VisionAgent.js';
 import { getAudioDuration, resolveBinaries } from '../utils/ffmpeg.js';
 
 const execFileAsync = promisify(execFile);
@@ -200,6 +201,7 @@ export class WhiteboardVideoAgent {
   constructor() {
     this._python = null;
     this.image = new ImageAgent();
+    this.vision = new VisionAgent();
   }
 
   /**
@@ -781,8 +783,8 @@ Yalnızca şu JSON biçimini döndür:
    * @param {string|null} [opts.fileName] çıktı dosyası adı (varsayılan: shorts_whiteboard.mp4)
    */
   async renderShorts({ audioPath, srtPath, narration, workDir, scenes = null,
-    sceneHints = null, sceneLabels = null, topic = '', fileName = 'shorts_whiteboard.mp4',
-    words = null }) {
+    sceneHints = null, sceneLabels = null, sceneObjects = null, topic = '',
+    fileName = 'shorts_whiteboard.mp4', words = null }) {
     // Eski kareler karışmasın: her çalıştırmada klasör sıfırlanır
     const framesDir = path.join(workDir, 'frames');
     await fs.rm(framesDir, { recursive: true, force: true });
@@ -813,14 +815,33 @@ Yalnızca şu JSON biçimini döndür:
     // 1) Sahne başına üretilmiş illüstrasyon (API varsa)
     const imageJobs = timeline.map((item, i) => ({
       narration: item.text,
-      description: (Array.isArray(sceneHints) ? sceneHints[i] : '') || ''
+      description: (Array.isArray(sceneHints) ? sceneHints[i] : '') || '',
+      objects: Array.isArray(sceneObjects) && Array.isArray(sceneObjects[i])
+        ? sceneObjects[i]
+        : []
     }));
+    if (this.image.isEnabled() && this.vision.isEnabled()) {
+      log2(this.vision.statusLine());
+    } else if (this.image.isEnabled()) {
+      log2(this.vision.statusLine(), 'WARN');
+    }
     const images = scenes && scenes.length ? scenes.map(() => null)
-      : await this.image.generateForScenes(imageJobs, workDir).catch((err) => {
+      : await this.image.generateForScenes(imageJobs, workDir, { vision: this.vision }).catch((err) => {
         log2(`Görsel üretimi atlandı: ${err.message}`, 'WARN');
         return timeline.map(() => null);
       });
     const imageCount = images.filter(Boolean).length;
+    const imageRun = this.image.lastRun || {};
+    if (imageRun.scores?.filter((score) => Number.isFinite(score)).length) {
+      const valid = imageRun.scores.filter((score) => Number.isFinite(score));
+      const avg = valid.reduce((sum, score) => sum + score, 0) / valid.length;
+      const low = valid.filter((score) => score < 7).length;
+      log2(
+        `Görsel doğrulama: ortalama ${avg.toFixed(1)}/10` +
+        (low ? `, ${low} sahne 7'nin altında` : '') +
+        (imageRun.retried ? `, ${imageRun.retried} yeniden deneme` : '')
+      );
+    }
     if (imageCount) {
       log2(`Görseller kullanılıyor: ${imageCount}/${timeline.length} sahne için üretilmiş illüstrasyon.`);
     } else if (this.image.isEnabled()) {
