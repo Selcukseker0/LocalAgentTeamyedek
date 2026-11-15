@@ -50,10 +50,23 @@ seçer; aynı senaryo ikinci kez üretilmez:
 4. Ses `edge-tts` ile üretilir, video gerçek ses süresine göre karelenir;
    yani süre tahmini değil, ölçülen ses süresi esastır.
 
-Senaryo, modele "cümle dizisi" olarak yazdırılır (`sentences: [{text, scene}]`):
-12-16 cümle, her cümle 9-11 kelime. Model kısa yazarsa senaryo iki kez daha
+Senaryo, modele "cümle dizisi" olarak yazdırılır:
+
+```json
+{"sentences":[{"text":"cümlenin kendisi","visual":"tahtaya çizilecek sahne","title":"vurgu"}]}
+```
+
+12-16 cümle, her cümle 9-11 kelime. Model kısa yazarsa senaryo iki tura kadar
 genişletilir; 109 kelimenin altında kalırsa açık hata verilir (bozuk video
 üretilmez). Uzun çıktı ise kısaltılır.
+
+Cümleler altyazıya girmeden önce denetlenir:
+
+- Prompt şablonu artıkları (`Kanca cümlesi:`, `Soru cümlesi:`, `Sebep 2:`)
+  cümleden **silinir**; model bunları metin sanıp yazsa bile altyazıya düşmez.
+- 6 kelimeden kısa, üç nokta ile yarım kalmış veya bağlaçla biten cümleler
+  atılır (`…` ile biten cümle altyazı olmaz).
+- Tekrar eden cümleler birebir değil, kelime örtüşmesine göre (%72) ayıklanır.
 
 ### Senaryoyu hangi model yazıyor?
 
@@ -77,9 +90,15 @@ Senaryo kurgusu kısa video şablonuna göre istenir: **kanca (1-2 cümle) →
 soru → sebep 1 → sebep 2 → kapanış sorusu**. Her cümle için ayrıca iki alan
 gelir:
 
-- `scene`: beyaz tahtaya çizilecek somut nesne (ör. "bal kavanozu")
-- `label`: tahtanın üstüne el yazısıyla yazılacak 1-3 kelimelik etiket
-  (ör. "3000 YIL", "SU YOK", "ANTİSEPTİK")
+- `visual`: beyaz tahtaya çizilecek sahnenin 3-8 kelimelik tarifi
+  (ör. "iki dil arasında köprü", "buz küpü eriyor"). Sahne seçiminde en
+  belirleyici sinyal budur; tek kelime eşleşmesi değil, cümlenin **ne
+  anlattığı** kullanılır.
+- `title`: tahtanın üstüne el yazısıyla yazılacak 1-2 kelimelik vurgu.
+  Modelin uydurduğu etiketler kabul edilmez: `title` sadece cümlenin içinde
+  geçiyorsa kullanılır. Aksi hâlde etiket cümledeki **sayıdan** (`%40`,
+  `3 KAT`) veya **konunun ana kelimesinden** üretilir; ikisi de yoksa bant
+  çizilmez (anlamsız başlık yazılmaz). Aynı bant en fazla 2 sahnede görünür.
 
 Hız kalibrasyonu: `tr-TR-AhmetNeural --rate=+20%` yaklaşık **saniyede 2.9
 kelime** okuyor. Farklı ses/hız kullanırsanız `.env` içinde
@@ -203,17 +222,21 @@ tanımlıdır:
 - Trend/ekonomi: `chart`, `money`, `shopping`, `factory`
 - Teknoloji/sağlık/çevre: `phone`, `shield`, `flame`, `cloud_rain`
 - Günlük hayat: `coffee`
-- Doğa/bilim: `sky`, `rainbow`, `planet`, `coffee`, `tree`, `thermometer`
+- Doğa/bilim: `sky`, `rainbow`, `planet`, `coffee`, `tree`, `thermometer`, `ice`, `leaf`, `moon`
+- İnsan/algı: `eye`, `ear`, `brain`, `heart`
+- Yolculuk: `boat`, `airplane`, `road`, `bridge`, `map`, `ladder`
 - Teknoloji/günlük: `lightbulb`, `battery`, `car`, `rocket`, `brain`, `map`
 
 `python src/whiteboard/render.py --list-scenes` komutu güncel listeyi verir.
 
-Bir sahne videoda en fazla 2 kez kullanılır; konu bir sahneyi doyurduğunda
+Katalog 49 sahnedir (buz, tuz, göz, kulak, anahtar, merdiven, köprü, tekne,
+uçak, takvim, ay, mıknatıs, yaprak, yol dahil). Bir sahne videoda en fazla 2 kez
+kullanılır, arka arkaya aynı sahne gelmez; konu bir sahneyi doyurduğunda
 aynı görsel aileden (doğa, günlük hayat, bilim...) anlamca en yakın sahne
 seçilir. Hiçbir sahneye uymayan cümlelerde videonun "konu sahnesi" (ör. kahve
 anlatımında kahve fincanı) kullanılır; rastgele çizim yapılmaz.
 
-Sahne seçim sırası: Ollama planı → cümlenin çizim ipucu → anahtar kelimeler →
+Sahne seçim sırası: Ollama planı → cümlenin `visual` tarifi → anahtar kelimeler →
 konu sahnesi → ailesi. Ollama'nın döndürdüğü Türkçe cevaplar ("vazo", "bal
 küpü") otomatik olarak katalog kimliğine çevrilir ve kısmi planlar da kabul
 edilir. Hangi cümlenin hangi sahneyi hangi kaynakla aldığı `run_info.json`

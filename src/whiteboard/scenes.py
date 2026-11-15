@@ -63,6 +63,20 @@ SCENE_KEYWORDS = {
     "flame": ["ateş", "ates", "sıcak", "sicak", "enerji", "yangın", "yangin", "ısı", "isi"],
     "factory": ["fabrika", "üretim", "uretim", "sanayi", "kirlilik", "ihracat"],
     "cloud_rain": ["yağmur", "yagmur", "hava", "iklim", "bulut", "kuraklık", "kuraklik"],
+    "ice": ["buz", "don", "donma", "soğuk", "soguk", "kutup", "erime", "eriyor", "kar"],
+    "salt": ["tuz", "tuzlu", "deniz suyu", "tat", "kristal"],
+    "eye": ["göz", "goz", "bak", "gör", "gor", "görme", "gorme", "dikkat", "izle"],
+    "ear": ["kulak", "ses", "duy", "gürültü", "gurultu", "müzik", "muzik", "dinle"],
+    "key": ["anahtar", "kilit", "aç", "ac", "şifre", "sifre", "erişim", "erisim"],
+    "ladder": ["merdiven", "yüksel", "yuksel", "tırman", "tirman", "adım", "adim", "hedef"],
+    "bridge": ["köprü", "kopru", "bağla", "bagla", "geçiş", "gecis", "iki yaka"],
+    "boat": ["gemi", "tekne", "yelken", "deniz", "okyanus", "liman", "yolculuk", "ticaret"],
+    "airplane": ["uçak", "ucak", "uçuş", "ucus", "havayolu", "pilot", "seyahat", "havaalanı", "havaalani"],
+    "calendar": ["takvim", "gün", "gun", "tarih", "ayın", "ayin", "hafta", "plan"],
+    "moon": ["ay", "gece", "uyku", "döngü", "dongu", "gelgit", "dolunay"],
+    "magnet": ["mıknatıs", "miknatis", "manyetik", "çekim", "cekim", "pusula"],
+    "leaf": ["yaprak", "bitki", "çiçek", "cicek", "mevsim", "fotosentez", "yeşil", "yesil"],
+    "road": ["yol", "patika", "yolculuk", "hedef", "süreç", "surec", "rota"],
     "shopping": ["alışveriş", "alisveris", "fiyat", "indirim", "tüketim", "tuketim", "market"],
 }
 
@@ -730,6 +744,211 @@ def scene_thermometer():
     return s
 
 
+def scene_ice():
+    """Buz küpü (soğuk, donma, buz)."""
+    top = [(420, 700), (660, 640), (820, 720), (580, 790)]
+    left = [(420, 700), (580, 790), (580, 1080), (420, 990)]
+    right = [(580, 790), (820, 720), (820, 1010), (580, 1080)]
+    s = [_fill_poly(top, (214, 238, 248)),
+         _fill_poly(left, (188, 222, 240)),
+         _fill_poly(right, (232, 246, 252)),
+         (_poly(top), BLACK, 12),
+         (_poly(left), BLACK, 12),
+         (_poly(right), BLACK, 12),
+         (_poly([(470, 760), (520, 800), (505, 870)]), BLACK, 7)]
+    for i in range(3):
+        x = 340 + i * 26
+        s.append((_line((x, 1160 + i * 18), (x + 120, 1120 + i * 18), 10), SKY, 7))
+    return s
+
+
+def scene_salt():
+    """Tuzluk ve dökülen tuz (tuz, deniz, tat)."""
+    body = [(430, 760), (650, 760), (690, 1180), (390, 1180)]
+    cap = [(410, 660), (670, 660), (660, 760), (420, 760)]
+    s = [_fill_poly(body, (245, 245, 245)),
+         (_poly(body), BLACK, 13),
+         (_poly(cap), GRAY, 0),
+         (_poly(cap), BLACK, 13)]
+    for i in range(3):
+        x = 485 + i * 55
+        s.append((_ellipse(x, 700, 16, 16, 16), BLACK, 8))
+    for i, (x, y) in enumerate([(470, 560), (540, 520), (610, 570), (500, 470), (580, 450)]):
+        s.append((_ellipse(x, y, 9, 9, 12), BLACK, 0))
+    return s
+
+
+def scene_eye():
+    """Göz (bakış, görme, dikkat)."""
+    upper = _bezier((300, 900), (420, 740), (660, 740), (780, 900), 32)
+    lower = _bezier((780, 900), (660, 1060), (420, 1060), (300, 900), 32)
+    return [(upper, BLACK, 14),
+            (lower, BLACK, 14),
+            (_ellipse(540, 900, 105, 105, 40), (120, 170, 220), 0),
+            (_ellipse(540, 900, 105, 105, 40), BLACK, 12),
+            (_ellipse(540, 900, 44, 44, 24), BLACK, 0),
+            (_line((300, 900), (200, 860), 10), BLACK, 8),
+            (_line((780, 900), (880, 860), 10), BLACK, 8),
+            (_line((470, 720), (450, 640), 8), BLACK, 7),
+            (_line((540, 715), (540, 630), 8), BLACK, 7),
+            (_line((610, 720), (630, 640), 8), BLACK, 7)]
+
+
+def scene_ear():
+    """Kulak ve ses dalgaları (duyma, ses, gürültü)."""
+    outer = _bezier((470, 700), (760, 700), (800, 1080), (600, 1150), 28) + \
+        _bezier((600, 1150), (470, 1200), (400, 1060), (470, 960), 20)
+    inner = _bezier((500, 830), (640, 820), (640, 960), (545, 985), 18)
+    s = [(outer, BLACK, 14),
+         (inner, BLACK, 11),
+         (_ellipse(520, 930, 32, 46, 20), BLACK, 0)]
+    for i in range(3):
+        r = 130 + i * 62
+        arc = _ellipse(760, 900, r, r, 30, start=-0.65, end=0.65)
+        s.append((arc, BLACK, 8))
+    return s
+
+
+def scene_key():
+    """Anahtar (kilit, çözüm, erişim)."""
+    s = [(_ellipse(420, 880, 130, 130, 40), BLACK, 14),
+         (_ellipse(420, 880, 58, 58, 24), BLACK, 11),
+         (_line((548, 880), (900, 880), 30), BLACK, 16)]
+    for dx in (740, 820):
+        s.append((_line((dx, 880), (dx, 990), 10), BLACK, 14))
+    s.append((_line((900, 880), (900, 960), 10), BLACK, 14))
+    return s
+
+
+def scene_ladder():
+    """Merdiven (yükselme, hedef, adım)."""
+    s = [(_line((380, 1250), (480, 620), 30), BLACK, 15),
+         (_line((700, 1250), (800, 620), 30), BLACK, 15)]
+    for i in range(5):
+        y = 700 + i * 130
+        s.append((_line((372 + i * 20, y + 40), (692 + i * 20, y + 40), 20), BLACK, 12))
+    return s
+
+
+def scene_bridge():
+    """Köprü (bağlantı, geçiş, iki yakayı birleştirme)."""
+    deck = _bezier((250, 980), (450, 830), (630, 830), (830, 980), 30)
+    s = [(deck, BLACK, 16),
+         (_line((250, 980), (250, 1080), 12), BLACK, 12),
+         (_line((830, 980), (830, 1080), 12), BLACK, 12),
+         (_line((380, 902), (380, 1050), 12), BLACK, 12),
+         (_line((700, 902), (700, 1050), 12), BLACK, 12)]
+    for i in range(4):
+        x = 380 + i * 106
+        s.append((_line((x, 880 if i in (1, 2) else 900), (x, 830), 8), BLACK, 7))
+    for i in range(3):
+        y = 1120 + i * 30
+        s.append((_line((250, y), (420, y), 12), SKY, 7))
+        s.append((_line((660, y), (830, y), 12), SKY, 7))
+    return s
+
+
+def scene_boat():
+    """Tekne/yelkenli (deniz, yolculuk, ticaret)."""
+    hull = [(330, 1050), (750, 1050), (690, 1170), (390, 1170)]
+    sail = [(560, 720), (560, 1010), (760, 1010)]
+    return [_fill_poly(hull, (208, 168, 120)),
+            (_poly(hull), BLACK, 13),
+            (_line((560, 690), (560, 1030), 14), BLACK, 13),
+            _fill_poly(sail, (240, 240, 240)),
+            (_poly(sail), BLACK, 12),
+            (_bezier((250, 1220), (420, 1180), (560, 1260), (720, 1210), 20), SKY, 9),
+            (_bezier((300, 1270), (460, 1230), (600, 1300), (760, 1250), 20), SKY, 9)]
+
+
+def scene_airplane():
+    """Uçak (uçuş, seyahat, hız)."""
+    body = _bezier((250, 900), (420, 820), (700, 840), (850, 900), 26) + \
+        _bezier((850, 900), (700, 960), (420, 980), (250, 900), 26)
+    wing = [(470, 930), (330, 1120), (470, 1120), (600, 950)]
+    tail = [(760, 880), (880, 730), (890, 890)]
+    s = [(body, BLACK, 14),
+         _fill_poly(wing, (214, 232, 248)),
+         (_poly(wing), BLACK, 12),
+         _fill_poly(tail, (214, 232, 248)),
+         (_poly(tail), BLACK, 12),
+         (_ellipse(330, 890, 34, 26, 18), SKY, 0),
+         (_line((250, 890), (200, 890), 8), BLACK, 8)]
+    for i in range(3):
+        s.append((_bezier((180 - i * 40, 1010), (300 - i * 40, 980),
+                          (420 - i * 40, 1040), (560 - i * 40, 1010), 18), GRAY, 6))
+    return s
+
+
+def scene_calendar():
+    """Takvim (gün, tarih, plan)."""
+    s = [(_rect(300, 640, 780, 1180), BLACK, 14),
+         (_line((300, 780), (780, 780), 12), BLACK, 12),
+         (_line((300, 640), (780, 640), 12), BLACK, 14)]
+    for x in (400, 680):
+        s.append((_line((x, 600), (x, 700), 12), BLACK, 10))
+    for row in range(3):
+        for col in range(4):
+            cx = 370 + col * 120
+            cy = 840 + row * 110
+            s.append((_ellipse(cx, cy, 16, 16, 14), BLACK, 0))
+    s.append((_ellipse(490, 950, 78, 78, 30), RED, 9))
+    return s
+
+
+def scene_moon():
+    """Ay ve yıldızlar (gece, uyku, döngü)."""
+    crescent = _ellipse(520, 900, 190, 190, 44, start=0.6, end=5.7)
+    s = [(crescent, (236, 210, 122), 22),
+         (_ellipse(300, 760, 26, 26, 16), BLACK, 8),
+         (_ellipse(740, 1050, 20, 20, 14), BLACK, 8)]
+    for (x, y, r) in ((760, 720, 34), (330, 1080, 26), (860, 940, 22)):
+        s.append(([(x - r, y), (x + r, y)], BLACK, 7))
+        s.append(([(x, y - r), (x, y + r)], BLACK, 7))
+    return s
+
+
+def scene_magnet():
+    """Mıknatıs (çekim, manyetizma, etki)."""
+    outer = ((420, 700), (420, 980), (660, 980), (660, 700))
+    s = [(_line(outer[0], outer[1], 24), BLACK, 16),
+         (_bezier(outer[1], (420, 1100), (660, 1100), outer[2], 26), BLACK, 16),
+         (_line(outer[2], outer[3], 24), BLACK, 16),
+         (_line((430, 700), (430, 830), 12), RED, 13),
+         (_line((650, 700), (650, 830), 12), (66, 133, 199), 13)]
+    for i in range(3):
+        r = 210 + i * 70
+        s.append((_ellipse(540, 900, r, r, 34, start=-0.5, end=0.5), GRAY, 6))
+    return s
+
+
+def scene_leaf():
+    """Yaprak (bitki, doğa, mevsim)."""
+    leaf = _bezier((420, 1180), (300, 900), (520, 660), (780, 620), 28) + \
+        _bezier((780, 620), (760, 880), (600, 1130), (420, 1180), 28)
+    s = [(leaf, GREEN, 13),
+         (_line((420, 1180), (770, 630), 24), BLACK, 10)]
+    for i in range(4):
+        t = 0.22 + i * 0.16
+        x = 420 + (770 - 420) * t
+        y = 1180 - (1180 - 630) * t
+        s.append((_line((x, y), (x + 110, y - 40), 10), BLACK, 6))
+        s.append((_line((x, y), (x + 60, y + 70), 10), BLACK, 6))
+    return s
+
+
+def scene_road():
+    """Yol (hedef, süreç, yolculuk)."""
+    s = [(_line((330, 1300), (520, 640), 24), BLACK, 14),
+         (_line((750, 1300), (560, 640), 24), BLACK, 14),
+         (_line((200, 1300), (880, 1300), 12), BLACK, 12)]
+    for i in range(4):
+        y = 1240 - i * 150
+        s.append((_line((540, y), (540, y - 80), 10), BLACK, 9))
+    return s
+
+
+
 SCENES = {
     "egyptian_vase": scene_egyptian_vase,
     "honey_pot": scene_honey_pot,
@@ -765,6 +984,20 @@ SCENES = {
     "brain": scene_brain,
     "map": scene_map,
     "thermometer": scene_thermometer,
+    "ice": scene_ice,
+    "salt": scene_salt,
+    "eye": scene_eye,
+    "ear": scene_ear,
+    "key": scene_key,
+    "ladder": scene_ladder,
+    "bridge": scene_bridge,
+    "boat": scene_boat,
+    "airplane": scene_airplane,
+    "calendar": scene_calendar,
+    "moon": scene_moon,
+    "magnet": scene_magnet,
+    "leaf": scene_leaf,
+    "road": scene_road,
     "generic": scene_generic,
 }
 

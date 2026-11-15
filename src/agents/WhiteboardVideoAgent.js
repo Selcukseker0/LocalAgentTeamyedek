@@ -56,6 +56,20 @@ const SCENE_HINTS = {
   brain: 'Beyin (düşünce, hafıza, öğrenme, zeka)',
   map: 'Harita ve konum iğnesi (yol, seyahat, ülke)',
   thermometer: 'Termometre (sıcaklık, ateş, soğuk, iklim)',
+  ice: 'Buz küpü (soğuk, donma, erime, kutup)',
+  salt: 'Tuzluk ve dökülen tuz (tuz, deniz, tat)',
+  eye: 'Göz (bakış, görme, dikkat)',
+  ear: 'Kulak ve ses dalgaları (duyma, ses, gürültü)',
+  key: 'Anahtar ve kilit (çözüm, erişim, sır)',
+  ladder: 'Merdiven (yükselme, hedef, adım adım)',
+  bridge: 'Köprü (bağlantı, iki yaka, geçiş)',
+  boat: 'Yelkenli tekne (deniz, yolculuk, ticaret)',
+  airplane: 'Uçak (uçuş, seyahat, hız)',
+  calendar: 'Takvim (gün, tarih, plan, süre)',
+  moon: 'Ay ve yıldızlar (gece, uyku, döngü)',
+  magnet: 'Mıknatıs (çekim, manyetizma, etki)',
+  leaf: 'Yaprak (bitki, doğa, mevsim)',
+  road: 'Yol (hedef, süreç, yolculuk)',
   shopping: 'Alışveriş çantası (fiyat, tüketim)',
   generic: 'Konuya uymayan nötr çizim'
 };
@@ -64,6 +78,10 @@ const SCENE_IDS = Object.keys(SCENE_HINTS);
 
 function log2(message, level = 'INFO') {
   log('WhiteboardVideoAgent', message, level);
+}
+
+function countWords(text) {
+  return (text || '').split(/\s+/).filter(Boolean).length;
 }
 
 // ---------------------------------------------------------------- yardımcılar
@@ -108,7 +126,7 @@ export function parseSrt(srt) {
  */
 export function buildTimeline(sentences, cues, audioDuration) {
   if (sentences.length === 0) return [];
-  const totalChars = sentences.reduce((sum, s) => sum + s.length, 0) || 1;
+  const weight = (text) => countWords(text) + 1;
 
   if (cues.length === sentences.length) {
     return sentences.map((text, i) => ({
@@ -119,9 +137,10 @@ export function buildTimeline(sentences, cues, audioDuration) {
     }));
   }
 
+  const totalWeight = sentences.reduce((sum, text) => sum + weight(text), 0) || 1;
   let cursor = 0;
   return sentences.map((text) => {
-    const duration = Math.max(1, (text.length / totalChars) * audioDuration);
+    const duration = Math.max(1, (weight(text) / totalWeight) * audioDuration);
     const item = { text, start: cursor, end: cursor + duration, duration };
     cursor += duration;
     return item;
@@ -227,7 +246,7 @@ export class WhiteboardVideoAgent {
         : [];
       const ranked = [...new Set([...hintRanked, ...textRanked])];
 
-      if (id && useCount(id) >= 3) {
+      if (id && useCount(id) >= 2) {
         const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
         if (alternative) {
           id = alternative;
@@ -248,7 +267,7 @@ export class WhiteboardVideoAgent {
         } else if (ranked.length) {
           id = this.relatedScene(ranked[0], usage, previous) || ranked[0];
           source = 'ilgili sahne';
-        } else if (anchor && useCount(anchor) < 3) {
+        } else if (anchor && useCount(anchor) < 2) {
           // Konu sahnesi üst üste gelmesin: mümkünse ailesinden devam
           const alternative = anchor === previous
             ? this.relatedScene(anchor, usage, previous)
@@ -261,6 +280,21 @@ export class WhiteboardVideoAgent {
         } else {
           id = useCount('question') < 2 ? 'question' : 'book';
           source = 'dolgu';
+        }
+      }
+
+      // Aynı sahne arka arkaya gelmesin (izleyici "tekrar" olarak görüyor)
+      if (id && id === previous) {
+        const alternative = ranked.find((candidate) => candidate !== id && useCount(candidate) < 2);
+        if (alternative) {
+          id = alternative;
+          source = 'çeşitlendirme';
+        } else {
+          const related = this.relatedScene(id, usage, previous);
+          if (related && related !== id) {
+            id = related;
+            source = 'ilgili sahne';
+          }
         }
       }
 
@@ -318,9 +352,10 @@ export class WhiteboardVideoAgent {
       .join('\n');
 
     const hintBlock = Array.isArray(hints)
-      ? `\nYazarın cümle başına önerdiği çizimler (bunları tercih et):\n${hints
-        .map((hint, i) => `${i + 1}. ${hint}`)
-        .join('\n')}\n`
+      ? `\nYazarın her cümle için verdiği görsel tarif (cümlenin ne anlattığını gösterir,\n` +
+        `sahne seçiminde cümleden daha belirleyicidir; karşılığı olan katalog sahnesini seç):\n${hints
+          .map((hint, i) => `${i + 1}. ${hint || '(tarif yok)'}`)
+          .join('\n')}\n`
       : '';
 
     try {
@@ -329,6 +364,8 @@ export class WhiteboardVideoAgent {
         prompt: `Beyaz tahtaya keçeli kalemle çizilecek bir Shorts anlatımı var.
 Her cümle için katalogdan EN UYGUN sahneyi seç. Sahne kimliğini katalogdaki gibi yaz.
 Cümle sırasını koru, sahne sayısı cümle sayısına eşit olsun.
+Her cümlede anlatılan OLAYI/nesneyi düşün; yalnızca tek bir kelimeye bakıp sahne seçme.
+Cümlede geçen bir kelime katalogda varsa ama cümlenin konusu başkaysa, konuya uyan sahneyi seç.
 Katalog:\n${catalog}
 ${hintBlock}
 Cümleler:
@@ -368,7 +405,10 @@ Yalnızca şu JSON biçimini döndür:
     ['human', ['heart', 'shield', 'clock', 'question']],
     ['industry', ['factory', 'money', 'chart', 'shopping', 'shield', 'check', 'cross']],
     ['tech', ['lightbulb', 'battery', 'phone', 'chart', 'rocket', 'car', 'factory']],
-    ['life', ['brain', 'book', 'thermometer', 'heart', 'map', 'tree', 'house']]
+    ['life', ['brain', 'book', 'thermometer', 'heart', 'map', 'tree', 'house']],
+    ['travel', ['boat', 'airplane', 'road', 'bridge', 'map', 'car', 'ladder']],
+    ['body', ['eye', 'ear', 'brain', 'heart', 'shield', 'hand']],
+    ['time', ['clock', 'calendar', 'moon', 'sun', 'hourglass']]
   ];
 
   /** Sahne yoksa anahtar kelime eşlemesi (Türkçe ekleri tolere eder). */
@@ -393,6 +433,20 @@ Yalnızca şu JSON biçimini döndür:
       ['brain', ['beyin', 'düşünce', 'dusunce', 'hafıza', 'hafiza', 'öğren', 'ogren', 'zeka', 'unut']],
       ['map', ['harita', 'konum', 'rota', 'seyahat', 'şehir', 'sehir', 'kıta', 'kita', 'ülke', 'ulke']],
       ['thermometer', ['termometre', 'sıcaklık', 'sicaklik', 'derece', 'ateş', 'ates', 'ısı', 'isi', 'soğuk', 'soguk', 'ısın', 'isin']],
+      ['ice', ['buz', 'donma', 'donuyor', 'eriyor', 'erime', 'kutup', 'buzul']],
+      ['salt', ['tuz', 'tuzlu', 'tuzluluk', 'kristal']],
+      ['eye', ['göz', 'goz', 'bakış', 'bakis', 'görme', 'gorme', 'görüyor', 'goruyor', 'dikkat']],
+      ['ear', ['kulak', 'duyma', 'duyuyor', 'gürültü', 'gurultu', 'ses dalga', 'dinliyor']],
+      ['key', ['anahtar', 'kilit', 'şifre', 'sifre', 'erişim', 'erisim', 'çözüm yolu']],
+      ['ladder', ['merdiven', 'tırman', 'tirman', 'yüksel', 'yuksel', 'adım adım', 'adim adim']],
+      ['bridge', ['köprü', 'kopru', 'iki yaka', 'bağlantı kur', 'baglanti kur', 'geçiş']],
+      ['boat', ['gemi', 'tekne', 'yelken', 'liman', 'okyanus', 'deniz yolu']],
+      ['airplane', ['uçak', 'ucak', 'uçuş', 'ucus', 'havayolu', 'pilot', 'havaalan', 'seyahat ediyor']],
+      ['calendar', ['takvim', 'tarih', 'hafta', 'her gün', 'her gun', 'ayın', 'ayin']],
+      ['moon', ['ay ışı', 'gece', 'uyku', 'dolunay', 'gelgit', 'döngü', 'dongu']],
+      ['magnet', ['mıknatıs', 'miknatis', 'manyetik', 'çekim gücü', 'cekim gucu', 'pusula']],
+      ['leaf', ['yaprak', 'bitki', 'çiçek', 'cicek', 'mevsim', 'fotosentez', 'yeşil', 'yesil']],
+      ['road', ['yol ', 'patika', 'yolculuk', 'süreç', 'surec', 'rota', 'hedefe']],
       ['planet', ['gezegen', 'dünya', 'dunya', 'uzay', 'mars', 'yıldız', 'yildiz', 'astronot', 'ay']],
       ['house', ['ev', 'konut', 'kira', 'emlak', 'aile', 'kapı', 'kapi', 'bina', 'oda', 'mutfak']],
       ['check', ['doğru', 'dogru', 'onay', 'çözüm', 'cozum', 'başarı', 'basari']],
