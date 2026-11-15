@@ -194,6 +194,8 @@ export class TrendAgent {
       `SON KULLANILAN KATEGORİLER (mümkünse farklı bir kategori seç): ${recentCategories.join(', ') || 'Yok'}`,
       '',
       'Kurallar:',
+      '- Konu ailede izlenebilir olsun: küfür, cinsellik, şiddet, siyaset, dedikodu veya ünlü magazini SEÇME.',
+      '- En iyi konular: bilim, doğa, tarih, teknoloji, günlük hayat, sağlık, psikoloji, ekonomi.',
       '- "topic" alanı TÜRKÇE olacak. İngilizce başlığı olduğu gibi kopyalama; Türkçeye çevirip kısalt.',
       '- "topic" en fazla 8 kelime ve 70 karakter olsun; sonunda nokta olmasın.',
       '- Konu beyaz tahtaya keçeli kalemle somut nesneler çizilerek anlatılabilir olmalı.',
