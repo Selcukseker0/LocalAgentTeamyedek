@@ -48,6 +48,9 @@ const EVERGREEN_TOPICS = [
   { topic: 'Neden bazı geceler yıldızlar daha parlak?', category: 'gizem' }
 ];
 
+// İngilizce başlıklar (Reddit/TIL) olduğu gibi konu seçilmesin
+const ENGLISH_HINTS = /\b(the|that|this|was|were|and|with|from|people|about|when|they|which|after|before|over|into|his|her|their|until|ended)\b/i;
+
 const CATEGORIES = [
   'teknoloji',
   'tarih',
@@ -125,6 +128,17 @@ export class TrendAgent {
     });
   }
 
+  /**
+   * Konu Türkçe ve kısa mı? (İngilizce TIL başlıkları, çok uzun cümleler reddedilir.)
+   */
+  isTurkishTopic(topic) {
+    const text = String(topic || '').trim();
+    if (text.length < 12 || text.length > 90) return false;
+    if (text.split(/\s+/).length > 14) return false;
+    if (ENGLISH_HINTS.test(text) && !/[ğüşıöç]/i.test(text)) return false;
+    return true;
+  }
+
   /** Her durumda çalışan yedek: geçmişte işlenmemiş ilginç konu seçer. */
   pickEvergreen(usedTopics, recentCategories = []) {
     const fresh = EVERGREEN_TOPICS.filter((item) => !this.isUsed(item.topic, usedTopics));
@@ -166,10 +180,12 @@ export class TrendAgent {
       `SON KULLANILAN KATEGORİLER (mümkünse farklı bir kategori seç): ${recentCategories.join(', ') || 'Yok'}`,
       '',
       'Kurallar:',
+      '- "topic" alanı TÜRKÇE olacak. İngilizce başlığı olduğu gibi kopyalama; Türkçeye çevirip kısalt.',
+      '- "topic" en fazla 8 kelime ve 70 karakter olsun; sonunda nokta olmasın.',
       '- Konu beyaz tahtaya keçeli kalemle somut nesneler çizilerek anlatılabilir olmalı.',
       '- Az bilinen, şaşırtıcı bir bilgi içermeli; "neden/nasıl" sorusuna cevap vermeli.',
       '- 45-50 saniyelik videoya sığacak tek bir odak konusu seç.',
-      strict ? '- Önceki cevabın tekrar/benzer çıktı; TAMAMEN farklı bir konu seç.' : '',
+      strict ? '- Önceki cevabın uygun değildi (tekrar/İngilizce/çok uzun). TAMAMEN farklı, TÜRKÇE, kısa bir konu seç.' : '',
       '',
       'Sadece şu JSON formatında yanıt ver:',
       '{',
@@ -192,6 +208,10 @@ export class TrendAgent {
           temperature: strict ? 1.0 : 0.85
         });
         if (!candidate?.topic) continue;
+        if (!this.isTurkishTopic(candidate.topic)) {
+          log('TrendAgent', `Konu Türkçe/kısa değil, reddedildi: "${candidate.topic}"`, 'WARN');
+          continue;
+        }
         if (this.isUsed(candidate.topic, usedTopics)) {
           log('TrendAgent', `Tekrar eden konu reddedildi: "${candidate.topic}"`, 'WARN');
           continue;

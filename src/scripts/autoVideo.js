@@ -6,6 +6,7 @@
  *   node src/scripts/autoVideo.js
  *   node src/scripts/autoVideo.js --topic "Buz neden kaygandır?"   # konuyu sen seç
  *   node src/scripts/autoVideo.js --no-review                      # inceleme adımını atla
+ *   node src/scripts/autoVideo.js --text "Metin..."                # senaryoyu Ollama'ya yazdırma
  *
  * Gereksinimler: Ollama (senaryo/trend), edge-tts (ses), Pillow + ffmpeg (video).
  */
@@ -15,7 +16,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../logger.js';
 import { TrendAgent } from '../agents/TrendAgent.js';
-import { ScriptAgent } from '../agents/ScriptAgent.js';
+import { ScriptAgent, countWords, splitSentences, estimateSeconds } from '../agents/ScriptAgent.js';
 import { ReviewerAgent } from '../agents/ReviewerAgent.js';
 import { VoiceAgent } from '../agents/VoiceAgent.js';
 import { WhiteboardVideoAgent } from '../agents/WhiteboardVideoAgent.js';
@@ -52,8 +53,6 @@ function slugify(text) {
 async function main() {
   const started = Date.now();
   const ts = stamp();
-  const workDir = path.join(config.paths.outputDir, 'auto', `${ts}-${slugify(argValue('topic', 'trend'))}`);
-  await fs.mkdir(workDir, { recursive: true });
 
   const trend = new TrendAgent();
   const scriptAgent = new ScriptAgent();
@@ -66,12 +65,40 @@ async function main() {
   const topicObj = manualTopic
     ? { topic: manualTopic, category: argValue('category', 'gündem'), popularityScore: 100, source: 'manuel' }
     : await trend.pickDailyTopic();
+  // Klasör adı seçilen konudan üretilir (her çalıştırma ayrı klasör)
+  const workDir = path.join(
+    config.paths.outputDir,
+    'auto',
+    `${ts}-${slugify(topicObj.topic)}`
+  );
+  await fs.mkdir(workDir, { recursive: true });
+
   console.log(`\n📌 Konu: ${topicObj.topic}  [${topicObj.category}]`);
+  console.log(`   Kaynak: ${topicObj.source || 'ollama'}`);
   console.log(`   Çalışma klasörü: ${workDir}\n`);
 
   // 2) Senaryo (+ inceleme)
-  let scriptObj = await scriptAgent.generateScript(topicObj);
-  if (!hasFlag('no-review')) {
+  const manualText = argValue('text');
+  let scriptObj;
+  if (manualText) {
+    const sentences = splitSentences(manualText);
+    scriptObj = {
+      title: topicObj.topic,
+      description: manualText.slice(0, 160),
+      tags: [],
+      narration: manualText.replace(/\s+/g, ' ').trim(),
+      sceneHints: null,
+      visualQueries: []
+    };
+    console.log(
+      `✍️  Elle verilen metin kullanılıyor: ${countWords(scriptObj.narration)} kelime, ` +
+      `${sentences.length} cümle (~${estimateSeconds(scriptObj.narration).toFixed(0)} sn)\n`
+    );
+  } else {
+    scriptObj = await scriptAgent.generateScript(topicObj);
+  }
+
+  if (!manualText && !hasFlag('no-review')) {
     let review = await reviewer.reviewScript(scriptObj);
     if (!review.approved) {
       log('autoVideo', `Reviewer revize istedi: ${review.feedback}`);
