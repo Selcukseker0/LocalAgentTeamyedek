@@ -308,3 +308,29 @@ Doğrulama: `.env`'e `LLM_API_KEY=gsk_TESTKEY0mb6X.   ` yazıldı →
 `process.env.LLM_API_KEY === "gsk_TESTKEY0mb6X"`, `doctor` iki ⚠️ satırı yazdı
 (`.env içeriği`, `LLM anahtarı`), `auto-video` uyarıyla **devam etti** (hata yok).
 `npm test` → **54/54** (`test/envLoad.test.js` 7 test + 401 parmak izi testi).
+
+## 14. Model adı 404 — "llama-3.3-70b-versatile does not exist"
+
+Anahtar düzeldikten sonra (56 karakter, nokta temizlendi) sıradaki hata model adıydı:
+Groq bu modeli kaldırmış, `404 code:"model_not_found"`. Sabit model adı yazmak
+kırılgan: adlar aylar içinde değişiyor.
+
+| İş | Durum | Nerede |
+|---|---|---|
+| 404 model → canlı liste | **eklendi** | `provider.js`: `GET {base}/models`, `pickModel()` ile sohbet modeli seçimi, istek **bir kez** yeni modelle tekrar (sonsuz döngü koruması: `modelSwaps`) |
+| `LLM_MODEL` boş | **değişti** | Artık hata değil: model listeden seçilir (eski davranış: `LLM_MODEL tanımlı değil` hatası) |
+| Model seçim kuralları | **eklendi** | ses/gömme/görsel/moderasyon modelleri elenir (`MODEL_BLOCK`); tercih sırası `gpt-oss-120b → llama-3.3-70b → llama-3.1-70b → qwen3-32b → kimi-k2 → llama-4-maverick → mixtral → llama-3.1-8b-instant → gemma` |
+| Seçilen modeli hatırlama | **eklendi** | `currentModel()` — doctor gerçekten kullanılan modeli yazar |
+| `doctor` mesajları | **düzeltti** | eskiden 404'te de "401 = anahtar geçersiz" yazıyordu; artık 401/403 → anahtar, 404 → model, 429 → kota ayrı öneri. Hata varsa sağlayıcının model listesi de basılır |
+| Model listesi komutu | **eklendi** | `npm run models [-- groq]` → `src/scripts/listModels.js`, önerilen model `→` ile işaretli |
+| `.env` örnekleri | **güncellendi** | `.env.duzeltilmis` + `.env.example`: `LLM_MODEL=` boş bırakılabilir (açıklamalı) |
+
+Doğrulama: sahte Groq ucuyla (404 → `/models` → başarı) uçtan uca denendi:
+
+```
+❌ LLM (groq): API hatası (404): The model `llama-3.3-70b-versatile` does not exist…
+✅ LLM (groq): openai/gpt-oss-120b · https://api.groq.com/openai/v1 · otomatik seçildi
+⚠️  LLM_MODEL satırı: .env'deki LLM_MODEL sağlayıcıda yok → notepad .env → LLM_MODEL=openai/gpt-oss-120b
+```
+
+`npm test` → **55/55** (yeni: model boş → otomatik seçim, 404 → listeden değiştir).

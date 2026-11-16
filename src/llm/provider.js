@@ -87,6 +87,72 @@ async function askGemini({ system, prompt, json, temperature, numPredict }) {
  * OpenAI uyumlu sohbet ucu (Groq, OpenRouter, Cerebras, LM Studio, llama.cpp…).
  * Model `response_format` desteklemiyorsa (400) JSON modu olmadan tekrar denenir.
  */
+/**
+ * OpenAI uyumlu sağlayıcının taban URL'i (…/v1). `/chat/completions` eklenmiş
+ * LLM_API_URL de kabul edilir.
+ */
+function customBaseUrl(provider) {
+  const base = (process.env.LLM_API_URL || CUSTOM_PRESETS[provider] || '').replace(/\/$/, '');
+  return base.replace(/\/chat\/completions$/, '');
+}
+
+/**
+ * Sağlayıcının gerçek model listesi (`GET /models`).
+ * Model adları sürekli değişiyor: `llama-3.3-70b-versatile` bir gün 404
+ * "does not exist" dönüyor. Tahmin etmek yerine listeyi okuyoruz.
+ */
+export async function listProviderModels(provider = activeProvider()) {
+  const base = customBaseUrl(provider);
+  if (!base) throw new Error('LLM_API_URL tanımlı değil');
+  const key = process.env.LLM_API_KEY || '';
+  const res = await fetch(`${base}/models`, {
+    headers: key ? { Authorization: `Bearer ${key}` } : {},
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!res.ok) {
+    throw new Error(`Model listesi alınamadı (${res.status}) — LLM_MODEL'i elle yazın`);
+  }
+  const data = await res.json();
+  const list = data?.data || data?.models || [];
+  return list
+    .map((item) => (typeof item === 'string' ? item : item?.id || item?.name))
+    .filter(Boolean)
+    .sort();
+}
+
+// Metin/JSON üretimine uygun olmayanlar (ses, gömme, görsel, moderasyon…)
+const MODEL_BLOCK = /whisper|tts|guard|embed|rerank|vision|audio|moderation|distil|clip/i;
+// Türkçe + JSON için sırayla tercih: güçlüden hızlıya
+const MODEL_HINTS = [
+  /gpt-oss-120b/i,
+  /llama-3\.3-70b/i,
+  /llama-3\.1-70b/i,
+  /qwen3?[^/]*32b/i,
+  /kimi-k2/i,
+  /llama-4[^/]*maverick/i,
+  /mixtral/i,
+  /llama-3\.1-8b-instant/i,
+  /gemma/i
+];
+
+/** Model listesinden sohbet için en uygun olanı seçer. */
+export function pickModel(models = []) {
+  const usable = models.filter((id) => !MODEL_BLOCK.test(id));
+  for (const hint of MODEL_HINTS) {
+    const hit = usable.find((id) => hint.test(id));
+    if (hit) return hit;
+  }
+  return usable[0] || null;
+}
+
+// 404 sonrası bulunan model bu çalıştırma boyunca hatırlanır
+const resolvedModels = new Map();
+
+/** Gerçekten kullanılan model (otomatik çözüldüyse o). */
+export function currentModel(provider = activeProvider()) {
+  return resolvedModels.get(provider) || process.env.LLM_MODEL || '';
+}
+
 async function askCustom({ system, prompt, json, temperature, numPredict }) {
   const provider = activeProvider();
   const base = (process.env.LLM_API_URL || CUSTOM_PRESETS[provider] || '').replace(/\/$/, '');
@@ -96,8 +162,21 @@ async function askCustom({ system, prompt, json, temperature, numPredict }) {
     );
   }
   const endpoint = /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`;
-  const model = process.env.LLM_MODEL || '';
-  if (!model) throw new Error('LLM_MODEL tanımlı değil (ör. llama-3.3-70b-versatile)');
+  // LLM_MODEL boşsa da çalışır: modeli sağlayıcının listesinden seçeriz.
+  let model = process.env.LLM_MODEL || resolvedModels.get(provider) || '';
+  if (!model) {
+    const models = await listProviderModels(provider).catch((err) => {
+      throw new Error(
+        `LLM_MODEL tanımlı değil ve model listesi alınamadı (${err.message}). ` +
+        `Elle yazın: LLM_MODEL=<sağlayıcının model adı>`
+      );
+    });
+    const pick = pickModel(models);
+    if (!pick) throw new Error(`LLM_MODEL tanımlı değil; sağlayıcı ${models.length} model listeledi, uygun olan yok`);
+    model = pick;
+    resolvedModels.set(provider, model);
+    console.warn(`[llm] ${provider}: LLM_MODEL boştu — model listesinden "${model}" seçildi.`);
+  }
   const key = process.env.LLM_API_KEY || '';
   const timeoutMs = Number(process.env.LLM_API_TIMEOUT_MS || 60_000);
   const attempts = Number(process.env.LLM_RETRIES || 2);
@@ -107,6 +186,7 @@ async function askCustom({ system, prompt, json, temperature, numPredict }) {
   ];
 
   let lastError = null;
+  let modelSwaps = 1; // model adı yanlışsa bir kez otomatik değiştir
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const body = {
       model,
@@ -167,6 +247,28 @@ async function askCustom({ system, prompt, json, temperature, numPredict }) {
           `API hatası (${res.status}): anahtar reddedildi — LLM_API_KEY: ` +
           `${key ? fingerprintSecret(key) : 'boş'}. ${text}`
         );
+        throw lastError;
+      }
+      // Model adı sağlayıcıda yok (Groq: "does not exist or you do not have access")
+      if (res.status === 404 && modelSwaps > 0) {
+        modelSwaps -= 1;
+        const models = await listProviderModels(provider).catch(() => []);
+        const pick = pickModel(models);
+        if (pick && pick !== model) {
+          console.warn(
+            `[llm] ${provider}: "${model}" bulunamadı (404) — canlı listeden "${pick}" seçildi` +
+            ` (${models.length} model). .env'deki LLM_MODEL satırını da güncelleyin.`
+          );
+          model = pick;
+          resolvedModels.set(provider, model);
+          attempt -= 1;
+          continue;
+        }
+        lastError = new Error(
+          `API hatası (404): "${model}" sağlayıcıda yok.` +
+          (models.length ? ` Mevcut modeller: ${models.slice(0, 12).join(', ')}` : ' Model listesi alınamadı.')
+        );
+        lastError.models = models;
         throw lastError;
       }
       lastError = new Error(`API hatası (${res.status}): ${text}`);
