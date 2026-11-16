@@ -9,6 +9,9 @@ const NUM_GPU = process.env.OLLAMA_NUM_GPU;
 // Modeli bellekte tut: her istekte 4.7 GB modelin yeniden yüklenmesini önler.
 const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
 
+const TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 300_000);   // tek çağrı üst sınırı
+const SLOW_MS = Number(process.env.OLLAMA_SLOW_WARN_MS || 90_000);
+
 export async function askOllama({
   system,
   prompt,
@@ -36,14 +39,39 @@ export async function askOllama({
   };
   if (json) body.format = 'json';
 
-  const res = await fetch(`${config.ollamaUrl}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
+  const startedAt = Date.now();
+  let res;
+  try {
+    res = await fetch(`${config.ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS)
+    });
+  } catch (err) {
+    const cause = err?.cause?.code || err?.name || err?.message;
+    throw new Error(
+      `Ollama bağlantı hatası: ${cause} (${config.ollamaUrl}). ` +
+      `Ollama açık mı? Tek çağrı süresi ${Math.round(TIMEOUT_MS / 1000)} sn ile sınırlı ` +
+      `(OLLAMA_TIMEOUT_MS ile değişir).`
+    );
+  }
+
+  const elapsed = Date.now() - startedAt;
+  if (elapsed > SLOW_MS) {
+    console.warn(
+      `[llm] Ollama yanıtı ${(elapsed / 1000).toFixed(0)} sn sürdü — model CPU'da çalışıyor olabilir. ` +
+      'Kontrol: OLLAMA_NUM_GPU boş olmalı, ekran kartı sürücüsü/Ollama sürümü güncel mi?'
+    );
+  }
 
   if (!res.ok) {
-    const text = await res.text();
+    const text = (await res.text()).slice(0, 300);
+    if (res.status === 404) {
+      throw new Error(
+        `Ollama modeli bulunamadı ("${config.ollamaModel}"). Kurulum: ollama pull ${config.ollamaModel}`
+      );
+    }
     throw new Error(`Ollama API hatası (${res.status}): ${text}`);
   }
 

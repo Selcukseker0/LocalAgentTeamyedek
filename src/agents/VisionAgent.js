@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import { log } from '../logger.js';
+import { geminiGenerate, geminiKey, resolveGeminiModel } from '../llm/gemini.js';
 
 /**
  * Vision doğrulaması: üretilen görsel cümleyi anlatıyor mu?
  *
  * Desteklenen sağlayıcılar:
- *  - gemini  (GEMINI_API_KEY, varsayılan model gemini-2.0-flash)
+ *  - gemini  (GEMINI_API_KEY; model GEMINI_MODEL/VISION_MODEL veya otomatik çözülür)
  *  - openai  (OPENAI_API_KEY, varsayılan model gpt-4o-mini)
  *
  * Anahtar yoksa `isEnabled()` false döner ve doğrulama atlanır; üretim durmaz.
@@ -47,8 +48,8 @@ export class VisionAgent {
   constructor() {
     const explicit = envValue('VISION_PROVIDER').toLowerCase();
     this.provider = explicit || (envValue('GEMINI_API_KEY', 'GOOGLE_API_KEY') ? 'gemini' : 'openai');
-    this.model = envValue('VISION_MODEL')
-      || (this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash');
+    this.model = envValue('VISION_MODEL', 'GEMINI_MODEL')
+      || (this.provider === 'openai' ? 'gpt-4o-mini' : '');
     this.apiUrl = envValue('VISION_API_URL');
     this.enabled = process.env.VISION_CHECK !== '0';
   }
@@ -87,29 +88,28 @@ export class VisionAgent {
     ].join('\n');
   }
 
-  async geminiVision(base64, question) {
-    const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent` +
-      `?key=${this.key()}`;
-    const res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+  async geminiVision(base64, question, mimeType = 'image/png') {
+    // Model adı emekliye ayrılmış olabilir: çözümleme ve 404 kurtarma gemini.js'te
+    const model = this.model || (await resolveGeminiModel());
+    const { content } = await geminiGenerate({
+      model,
+      body: {
         contents: [{
           parts: [
             { text: question },
-            { inline_data: { mime_type: 'image/png', data: base64 } }
+            { inline_data: { mime_type: mimeType, data: base64 } }
           ]
         }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 300, responseMimeType: 'application/json' }
-      })
+        generationConfig: {
+          temperature: 0.1,
+          // Düşünen modellerde puan JSON'u 300 token'a sığmıyordu (puan hiç gelmiyordu)
+          maxOutputTokens: 2048,
+          responseMimeType: 'application/json'
+        }
+      },
+      label: 'gemini-vision'
     });
-    if (!res.ok) throw new Error(`Gemini vision hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
-    const data = await res.json();
-    const text = (data?.candidates?.[0]?.content?.parts || [])
-      .map((part) => part.text || '')
-      .join(' ');
-    return parseJsonLoose(text);
+    return parseJsonLoose(content);
   }
 
   async openaiVision(base64, question) {
@@ -158,9 +158,14 @@ export class VisionAgent {
   async check(image, narration, objects = []) {
     if (!this.isEnabled()) return null;
     let base64;
+    let mimeType = 'image/png';
     try {
       const buffer = Buffer.isBuffer(image) ? image : await fs.readFile(image);
       base64 = buffer.toString('base64');
+      // Pollinations JPEG döndürüyor; yanlış mime tipi Gemini'de hataya yol açıyor
+      if (buffer[0] === 0xff && buffer[1] === 0xd8) mimeType = 'image/jpeg';
+      else if (buffer[0] === 0x89 && buffer[1] === 0x50) mimeType = 'image/png';
+      else if (buffer.slice(0, 4).toString() === 'RIFF') mimeType = 'image/webp';
     } catch (err) {
       log('VisionAgent', `Görsel okunamadı: ${err.message}`, 'WARN');
       return null;
@@ -172,7 +177,7 @@ export class VisionAgent {
         ? await this.openaiVision(base64, question)
         : (this.provider === 'custom'
           ? await this.customVision(base64, question)
-          : await this.geminiVision(base64, question));
+          : await this.geminiVision(base64, question, mimeType));
       if (!raw) return null;
       const score = Number(raw.score);
       return {

@@ -40,6 +40,17 @@ export function findAbstractWords(text) {
   return matches ? [...new Set(matches.map((item) => item.toLocaleLowerCase('tr')))] : [];
 }
 const MAX_REGEN = 2;
+/**
+ * Yavaş model (CPU'da çalışan 7b) tek çağrıda ~5 dakika harcıyor; plan + 2 bölüm
+ * + ek turlar 20 dakikaya çıkıyordu. Tek geçiş modunda senaryo TEK çağrıda
+ * yazılır. `auto` = LLM sağlayıcısı ollama ise açık.
+ */
+function singlePassEnabled() {
+  const setting = String(process.env.SCRIPT_SINGLE_PASS || 'auto').toLowerCase();
+  if (setting === '1' || setting === 'true') return true;
+  if (setting === '0' || setting === 'false') return false;
+  return (process.env.LLM_PROVIDER || 'ollama').toLowerCase() === 'ollama';
+}
 // Toplam senaryo bütçesi: model yavaşsa (7b, CPU) 20 dakika beklemek yerine
 // elde olanla devam edilir.
 const SCRIPT_BUDGET_MS = Number(process.env.SCRIPT_BUDGET_SEC || 600) * 1000;
@@ -691,6 +702,46 @@ export class ScriptAgent {
     return normalizeScenes(raw);
   }
 
+  /**
+   * Tek çağrıda tüm senaryo (yavaş/yerel modeller için).
+   * Plan + bölüm + ek turlar yerine 12-14 cümleyi bir seferde ister.
+   */
+  async writeFullScript(topicObj, research, feedback = '') {
+    const facts = research?.facts?.length ? research.facts.map((fact) => `- ${fact}`).join('\n') : '';
+    const prompt = [
+      `Konu: "${topicObj.topic}" (Kategori: ${topicObj.category})`,
+      feedback ? `Önceki denemenin sorunu: ${feedback}` : '',
+      facts ? `Doğrulanmış bilgiler (bunlara bağlı kal, yeni bilgi uydurma):\n${facts}` : '',
+      '',
+      '30-45 saniyelik dikey Shorts için TÜM senaryoyu tek seferde yaz.',
+      'Toplam 12-14 cümle olsun (yaklaşık 90-110 kelime).',
+      '',
+      'Kurallar:',
+      '- İlk cümle şaşırtıcı bir bilgi versin (hook); ikinci cümle seyirciye soru sorsun.',
+      '- Her cümle 8-14 kelime, TEK bilgi, tam cümle (nokta/soru işareti ile bitsin).',
+      '- Her cümlede en az bir ÇİZİLEBİLİR somut isim olsun (nesne, hayvan, yer, kişi).',
+      '- Soyut kelime yasak: gizemli, ilginç, harika, inanılmaz, şaşırtıcı, muhteşem, büyüleyici.',
+      '- İki nokta (:) ve numaralandırma kullanma; etiket yazma ("Kanca:", "1)" gibi).',
+      '- Son cümle kısa bir kapanış sorusu olsun.',
+      '- Aynı fikri tekrar etme.',
+      '',
+      'Her cümle için dört alan:',
+      '  "narration": seslendirilecek tam cümle',
+      '  "visual_objects": cümlede GEÇEN 2-4 somut nesne (Türkçe, kısa ad)',
+      '  "image_prompt": tek sahne tarifi (6-16 kelime, nesneleri içersin, yazı isteme)',
+      '  "title": tahtaya yazılacak en fazla 3 kelime (sayı varsa sayı)',
+      '',
+      'Yalnızca şu JSON:',
+      '{"scenes":[{"narration":"...","visual_objects":["..."],"image_prompt":"...","title":"..."}]}'
+    ].filter(Boolean).join('\n');
+
+    const raw = await this.call(prompt, { temperature: 0.75, numPredict: 1200, label: 'senaryo (tek geçiş)' });
+    const list = Array.isArray(raw?.scenes) ? raw.scenes : (Array.isArray(raw) ? raw : []);
+    const scenes = normalizeScenes({ scenes: list });
+    const title = cleanText(raw?.title) || cleanText(topicObj.topic);
+    return { scenes, outline: { title, description: '', tags: [], hook: '', facts: [], closing: '' } };
+  }
+
   /** Eksik kalan kelimeler için ek sahneler ister. */
   async extendScenes(topicObj, outline, scenes, missingWords) {
     const existing = scenes.map((scene) => scene.narration).join(' ');
@@ -802,7 +853,34 @@ export class ScriptAgent {
     const startedAt = Date.now();
     const overBudget = () => Date.now() - startedAt > SCRIPT_BUDGET_MS;
 
+    const singlePass = singlePassEnabled();
+    if (singlePass) {
+      log('ScriptAgent', 'Tek geçiş modu: senaryo tek çağrıda yazılacak (yavaş model için).');
+    }
+
     while (attempt <= MAX_REGEN && !overBudget()) {
+      if (singlePass && !overBudget()) {
+        const full = await this.writeFullScript(topicObj, research, feedback);
+        let scenes = dedupeScenes(sanitizeScenes(full.scenes));
+        scenes = this.prepareScenes(scenes, topicObj.topic);
+        lastScript = this.buildScript(scenes, full.outline);
+        const check = validateScript(lastScript.scenes, { facts: research?.facts || [] });
+        if (check.warnings?.length) log('ScriptAgent', `Uyarı: ${check.warnings.join('; ')}`, 'WARN');
+        if (check.ok) {
+          log(
+            'ScriptAgent',
+            `Senaryo hazır: ${scenes.length} sahne, ${countWords(lastScript.narration)} kelime, ` +
+            `~${estimateSeconds(lastScript.narration).toFixed(0)} sn (tek geçiş).`
+          );
+          return this.finalizeScript(lastScript, topicObj);
+        }
+        lastProblems = check.problems;
+        log('ScriptAgent', `Kontrol başarısız (deneme ${attempt + 1}): ${check.problems.slice(0, 5).join('; ')}`, 'WARN');
+        attempt += 1;
+        feedback = check.problems.slice(0, 3).join('; ');
+        continue;
+      }
+
       const outline = await this.createOutline(topicObj, research, feedback);
       const prefix = attempt > 0
         ? `Önceki denemenin sorunları: ${lastProblems.slice(0, 4).join('; ')}.`

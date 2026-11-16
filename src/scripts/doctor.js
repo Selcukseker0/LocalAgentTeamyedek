@@ -102,19 +102,98 @@ async function main() {
     record(false, 'ffmpeg', err.message, 'pip.cmd install imageio-ffmpeg veya FFMPEG_PATH ayarla');
   }
 
-  // 7) Ollama
+  // 7) Birincil LLM sağlayıcısı (video başlamadan önce gerçek istek)
+  const provider = (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
+  if (provider === 'gemini' || provider === 'anthropic') {
+    const started = Date.now();
+    try {
+      if (provider === 'gemini') {
+        const { resolveGeminiModel, geminiGenerate } = await import('../llm/gemini.js');
+        const model = await resolveGeminiModel();
+        // Küçük ama gerçek istek: bağlantı + anahtar + model adı birlikte sınanır
+        await geminiGenerate({
+          model,
+          body: {
+            contents: [{ role: 'user', parts: [{ text: 'Sadece "ok" yaz.' }] }],
+            generationConfig: { maxOutputTokens: 2048, temperature: 0 }
+          },
+          timeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 30_000),
+          retries: 1,
+          label: 'doctor'
+        });
+        record(true, `Gemini (${provider})`, `${model} · ${((Date.now() - started) / 1000).toFixed(1)} sn`);
+      } else {
+        const { askLLM } = await import('../llm/provider.js');
+        await askLLM({ prompt: 'Sadece "ok" yaz.', temperature: 0 });
+        record(true, `Anthropic (${provider})`, `${((Date.now() - started) / 1000).toFixed(1)} sn`);
+      }
+    } catch (err) {
+      record(
+        false,
+        `${provider === 'gemini' ? 'Gemini' : 'Anthropic'} (birincil model)`,
+        err.message,
+        provider === 'gemini'
+          ? 'İnternet/VPN/güvenlik duvarı; GEMINI_MODEL boş bırakılırsa model otomatik seçilir. ' +
+            'Bağlantı yoksa LLM_PROVIDER=ollama yap (yavaş olur) veya LLM_NO_FALLBACK=1 ile hızlı dur.'
+          : 'ANTHROPIC_API_KEY ve internet bağlantısını kontrol et.'
+      );
+    }
+  } else {
+    record(true, 'LLM sağlayıcısı', 'ollama (yerel model, internet gerekmez)');
+  }
+
+  // 8) Ollama
+  const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
   try {
-    const res = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(2500) });
+    const started = Date.now();
+    const res = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(2500) });
     const data = await res.json();
+    const latency = Date.now() - started;
     const models = (data.models || []).map((m) => m.name);
     const wanted = process.env.OLLAMA_MODEL || 'qwen2.5:7b';
     const hasModel = models.some((name) => name.startsWith(wanted.split(':')[0]));
-    record(hasModel, 'Ollama', hasModel
-      ? `çalışıyor, ${wanted} bulundu`
-      : `çalışıyor ama "${wanted}" yok (mevcut: ${models.slice(0, 5).join(', ') || 'yok'})`,
-    `ollama pull ${wanted}`);
+    const gpuNote = process.env.OLLAMA_NUM_GPU === '0'
+      ? ' ⚠️ OLLAMA_NUM_GPU=0 → CPU kilitli, yavaş olur'
+      : '';
+    record(
+      hasModel,
+      'Ollama',
+      hasModel
+        ? `çalışıyor (${latency} ms), ${wanted} bulundu${gpuNote}`
+        : `çalışıyor ama "${wanted}" yok (mevcut: ${models.slice(0, 5).join(', ') || 'yok'})`,
+      `ollama pull ${wanted}`
+    );
+    if (hasModel) {
+      // Hız ölçümü: 7b CPU'da ~2 tok/s ise tek senaryo çağrısı dakikalar sürer
+      const t0 = Date.now();
+      try {
+        await fetch(`${ollamaUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: wanted,
+            stream: false,
+            keep_alive: process.env.OLLAMA_KEEP_ALIVE || '30m',
+            options: { num_predict: 12, temperature: 0 },
+            messages: [{ role: 'user', content: 'Tek kelimeyle yanıtla: hazır' }]
+          }),
+          signal: AbortSignal.timeout(120_000)
+        });
+        const ms = Date.now() - t0;
+        const perToken = ms / 12;
+        const note = perToken > 400
+          ? `⚠️ yavaş (~${(perToken / 1000).toFixed(1)} sn/kelime) — GPU kullanılmıyor olabilir`
+          : 'hız makul';
+        record(perToken <= 400, 'Ollama hızı', `${(ms / 1000).toFixed(1)} sn (12 kelime) · ${note}`,
+          'Ekran kartı sürücüsü/Ollama sürümü güncel mi? OLLAMA_NUM_GPU satırını boşalt. ' +
+          'Küçük model: ollama pull qwen2.5:3b + OLLAMA_MODEL=qwen2.5:3b');
+      } catch {
+        record(false, 'Ollama hızı', 'ölçülemedi (ilk yükleme uzun sürüyor olabilir)',
+          'Bir kez elle deneyin: ollama run ' + wanted);
+      }
+    }
   } catch {
-    record(false, 'Ollama', 'ulaşılamadı (127.0.0.1:11434)',
+    record(false, 'Ollama', `ulaşılamadı (${ollamaUrl})`,
       'Ollama uygulamasını aç veya "ollama serve" çalıştır');
   }
 
