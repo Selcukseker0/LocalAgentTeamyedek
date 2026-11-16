@@ -79,10 +79,33 @@ test('429 gelirse bekleyip tekrar dener', async () => {
   assert.equal(calls.length, 2);
 });
 
-test('LLM_MODEL boşsa anlaşılır hata verir', async () => {
+test('LLM_MODEL boşsa model listesinden otomatik seçilir', async () => {
   setEnv({ LLM_MODEL: '', LLM_NO_FALLBACK: '1' });
+  script = [
+    jsonResponse({ data: [{ id: 'whisper-large-v3' }, { id: 'gpt-oss-120b' }, { id: 'llama-3.1-8b-instant' }] }),
+    jsonResponse(OK)
+  ];
   const { askLLM } = await import('../src/llm/provider.js?case=custom-nomodel');
-  await assert.rejects(() => askLLM({ prompt: 'test' }), /LLM_MODEL/);
+  const result = await askLLM({ prompt: 'test', json: true });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/models');
+  assert.equal(calls[1].body.model, 'gpt-oss-120b', 'ses modeli değil, sohbet modeli seçilmeli');
+});
+
+test('LLM_MODEL 404 verirse canlı listeden yeni model seçilip tekrar denenir', async () => {
+  // Gerçek olay: llama-3.3-70b-versatile Groq'tan kaldırıldı → 404 model_not_found
+  setEnv({ LLM_MODEL: 'llama-3.3-70b-versatile', LLM_NO_FALLBACK: '1' });
+  script = [
+    jsonResponse({ error: { message: 'The model `llama-3.3-70b-versatile` does not exist', code: 'model_not_found' } }, 404),
+    jsonResponse({ data: [{ id: 'llama-3.3-70b-versatile' }, { id: 'openai/gpt-oss-120b' }] }),
+    jsonResponse(OK)
+  ];
+  const { askLLM, currentModel } = await import('../src/llm/provider.js?case=custom-404');
+  const result = await askLLM({ prompt: 'test', json: true });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls[1].url, 'https://api.groq.com/openai/v1/models');
+  assert.equal(calls[2].body.model, 'openai/gpt-oss-120b');
+  assert.equal(currentModel('groq'), 'openai/gpt-oss-120b');
 });
 
 test('Ollama akışı (NDJSON) birleştirilir ve JSON ayrıştırılır', async () => {

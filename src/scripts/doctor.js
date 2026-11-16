@@ -146,20 +146,39 @@ async function main() {
   if (isCustom) {
     const started = Date.now();
     try {
-      const { askLLM } = await import('../llm/provider.js');
+      const { askLLM, currentModel } = await import('../llm/provider.js');
       await askLLM({ prompt: 'Sadece "ok" yaz.', temperature: 0 });
       const endpoint = process.env.LLM_API_URL || CUSTOM_PRESETS[provider];
-      record(true, `LLM (${provider})`, `${process.env.LLM_MODEL || '?'} · ${endpoint} · ${((Date.now() - started) / 1000).toFixed(1)} sn`);
+      const used = currentModel(provider);
+      const note = used && used !== process.env.LLM_MODEL
+        ? ` · otomatik seçildi (LLM_MODEL=${process.env.LLM_MODEL || 'boş'} çalışmadı)`
+        : '';
+      record(true, `LLM (${provider})`, `${used || '?'} · ${endpoint} · ${((Date.now() - started) / 1000).toFixed(1)} sn${note}`);
+      if (note) {
+        warn('LLM_MODEL satırı', `.env'deki LLM_MODEL (${process.env.LLM_MODEL}) sağlayıcıda yok`,
+          `notepad .env → LLM_MODEL=${used}  (ya da boş bırakın, kod her seferinde listeyi okur)`);
+      }
     } catch (err) {
-      record(
-        false,
-        `LLM (${provider})`,
-        err.message,
-        `LLM_API_KEY: ${fingerprintSecret(process.env.LLM_API_KEY)} · LLM_MODEL: ${process.env.LLM_MODEL || 'boş'}. ` +
-        '401 = anahtar geçersiz: console.groq.com/keys üzerinden yenisini al, satırın sonunda ' +
-        'boşluk/nokta bırakma. Groq: api.groq.com · OpenRouter: openrouter.ai · ' +
-        'LM Studio yerelde: LLM_PROVIDER=lmstudio (anahtar gerekmez)'
-      );
+      const status = Number((err.message.match(/API hatası \((\d{3})\)/) || [])[1] || 0);
+      const keyInfo = `LLM_API_KEY: ${fingerprintSecret(process.env.LLM_API_KEY)} · LLM_MODEL: ${process.env.LLM_MODEL || 'boş'}`;
+      let fix;
+      if (status === 401 || status === 403) {
+        fix = `${keyInfo}. 401 = anahtar geçersiz: console.groq.com/keys üzerinden yenisini al, ` +
+          'satırın sonunda boşluk/nokta bırakma.';
+      } else if (status === 404) {
+        fix = `${keyInfo}. Model adı sağlayıcıda yok. Listeyi gör: npm.cmd run models · ` +
+          'ya da LLM_MODEL satırını boş bırakın (kod canlı listeden seçer).';
+      } else if (status === 429) {
+        fix = `Kota/rate limit (429). Ücretsiz katman sınırı; biraz bekleyin veya başka sağlayıcı ` +
+          '(openrouter/cerebras). Gemini kotası ayrı: aistudio.google.com/apikey';
+      } else {
+        fix = `${keyInfo}. Bağlantı/anahtar/model üçlüsünü kontrol edin. Groq: api.groq.com · ` +
+          'OpenRouter: openrouter.ai · LM Studio yerelde: LLM_PROVIDER=lmstudio (anahtar gerekmez)';
+      }
+      record(false, `LLM (${provider})`, err.message, fix);
+      if (err.models?.length) {
+        console.log(`   ℹ️  ${provider} model listesi: ${err.models.slice(0, 12).join(', ')}`);
+      }
     }
   } else if (provider === 'gemini' || provider === 'anthropic') {
     const started = Date.now();

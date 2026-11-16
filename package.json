@@ -10,7 +10,8 @@
     "auto-video": "node src/scripts/autoVideo.js",
     "env:init": "node src/scripts/initEnv.js",
     "doctor": "node src/scripts/doctor.js",
-    "test": "node --test"
+    "test": "node --test",
+    "models": "node src/scripts/listModels.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

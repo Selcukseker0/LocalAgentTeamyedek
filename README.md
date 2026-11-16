@@ -514,6 +514,34 @@ Kurallar: her anahtar **bir kez**, sayısal alanlara harf yazma, değerin sonund
 boşluk/nokta bırakma, `GEMINI_MODEL`/`VISION_MODEL` gibi model adlarını
 **uydurma** (boş bırak, kod çözer).
 
+### Model adı 404 verirse: canlı listeden otomatik seçim
+
+Sağlayıcılar modelleri kaldırıyor. Gerçek olay: `LLM_MODEL=llama-3.3-70b-versatile`
+Groq'ta kaldırıldı → `404 model_not_found`, video hiç başlamadı.
+
+```
+❌ LLM (groq): API hatası (404): The model `llama-3.3-70b-versatile` does not exist…
+```
+
+Artık 404 gelince kod `GET /models` listesini okuyup uygun **sohbet** modelini seçer
+(ses/gömme/görsel modelleri elenir; `gpt-oss-120b`, `llama-3.3-70b`, `qwen3-32b`,
+`kimi-k2`… sırasıyla tercih edilir) ve isteği bir kez daha dener:
+
+```
+[llm] groq: "llama-3.3-70b-versatile" bulunamadı (404) — canlı listeden "openai/gpt-oss-120b" seçildi (4 model).
+✅ LLM (groq): openai/gpt-oss-120b · https://api.groq.com/openai/v1 · 1.1 sn · otomatik seçildi
+⚠️  LLM_MODEL satırı: .env'deki LLM_MODEL (llama-3.3-70b-versatile) sağlayıcıda yok
+   → notepad .env → LLM_MODEL=openai/gpt-oss-120b  (ya da boş bırakın)
+```
+
+`LLM_MODEL` satırını **boş bırakmak** artık geçerli: kod her çalıştırmada listeyi
+okuyup seçer. Hangi modellerin açık olduğunu görmek için:
+
+```powershell
+npm.cmd run models            # .env'deki sağlayıcı
+npm.cmd run models -- groq    # belirli sağlayıcı (→ işaretli satır önerilen)
+```
+
 ### Değerler artık okunurken düzeltiliyor
 
 Sohbetten anahtar kopyalayınca sonunda nokta kalıyor: `LLM_API_KEY=gsk_...0mb6X.`
