@@ -17,6 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { countWords } from '../agents/ScriptAgent.js';
 import { generateShort, estimateSeconds } from '../pipeline/shortPipeline.js';
+import { summarizeIssues, validateEnvFile } from '../utils/envCheck.js';
 
 function hasFlag(name) {
   return process.argv.includes(`--${name}`);
@@ -39,6 +40,26 @@ async function main() {
       'ℹ️  .env bulunamadı — varsayılan ayarlarla devam ediliyor.\n' +
       '   Oluşturmak için: npm run env:init\n'
     );
+  }
+
+  // .env bozuksa üretime hiç başlamadan söyle: eskiden "10cls" gibi bir değer
+  // yüzünden kontroller sessizce kapanıyor, hata ancak video bittikten sonra
+  // fark ediliyordu.
+  if (envExists) {
+    const { issues } = await validateEnvFile(path.join(process.cwd(), '.env'));
+    const errors = issues.filter((item) => item.level === 'error');
+    if (issues.length) {
+      console.log(`\n⚠️  .env: ${summarizeIssues(issues)}`);
+      for (const item of issues) {
+        console.log(`   ${item.level === 'error' ? '❌' : '⚠️ '} ${item.message}`);
+      }
+      console.log('   Temiz dosya: .env.duzeltilmis  (kopyala: Copy-Item .env.duzeltilmis .env -Force)\n');
+    }
+    if (errors.length) {
+      console.log('❌ .env içinde düzeltilmesi gereken hata var — üretim başlatılmadı.\n');
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const manualScenes = (argValue('scenes') || '')

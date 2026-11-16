@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { log } from '../logger.js';
 
 // Uzun senaryolar (130+ kelime + JSON alanları) 512 token'a sığmıyordu;
 // 900 token 130-140 kelimelik senaryo için yeterli ve daha hızlı.
@@ -29,7 +30,7 @@ export async function askOllama({
 
   const body = {
     model: config.ollamaModel,
-    stream: false,
+    stream: true,          // ilerlemeyi görebilelim: 5-9 dakikalık bekleyiş sessiz kalmasın
     keep_alive: KEEP_ALIVE,
     options,
     messages: [
@@ -49,19 +50,11 @@ export async function askOllama({
       signal: AbortSignal.timeout(TIMEOUT_MS)
     });
   } catch (err) {
-    const cause = err?.cause?.code || err?.name || err?.message;
+    const cause = err?.cause?.code || err?.message || err?.name;
     throw new Error(
       `Ollama bağlantı hatası: ${cause} (${config.ollamaUrl}). ` +
       `Ollama açık mı? Tek çağrı süresi ${Math.round(TIMEOUT_MS / 1000)} sn ile sınırlı ` +
       `(OLLAMA_TIMEOUT_MS ile değişir).`
-    );
-  }
-
-  const elapsed = Date.now() - startedAt;
-  if (elapsed > SLOW_MS) {
-    console.warn(
-      `[llm] Ollama yanıtı ${(elapsed / 1000).toFixed(0)} sn sürdü — model CPU'da çalışıyor olabilir. ` +
-      'Kontrol: OLLAMA_NUM_GPU boş olmalı, ekran kartı sürücüsü/Ollama sürümü güncel mi?'
     );
   }
 
@@ -75,17 +68,75 @@ export async function askOllama({
     throw new Error(`Ollama API hatası (${res.status}): ${text}`);
   }
 
-  const data = await res.json();
-  const content = data?.message?.content?.trim() || '';
+  // NDJSON akışını parça parça oku; kullanıcı yazıldığını görsün
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let chunks = 0;
+  let lastLog = Date.now();
+  const reader = res.body?.getReader?.();
+
+  const handleLine = (line) => {
+    const text = line.trim();
+    if (!text) return;
+    try {
+      const obj = JSON.parse(text);
+      const piece = obj?.message?.content || '';
+      if (piece) {
+        content += piece;
+        chunks += 1;
+      }
+      if (obj?.error) throw new Error(String(obj.error));
+    } catch {
+      // Bozuk tek satır tüm yanıtı bozmasın
+    }
+  };
+
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index = buffer.indexOf('\n');
+      while (index >= 0) {
+        handleLine(buffer.slice(0, index));
+        buffer = buffer.slice(index + 1);
+        index = buffer.indexOf('\n');
+      }
+      if (Date.now() - lastLog > 5000) {
+        const seconds = Math.round((Date.now() - startedAt) / 1000);
+        log(`Ollama yazıyor… ${content.length} karakter, ${seconds} sn`);
+        lastLog = Date.now();
+      }
+    }
+    handleLine(buffer);
+  } else {
+    // Akış yoksa tek parça yanıt
+    const data = await res.json();
+    content = data?.message?.content || '';
+  }
+
+  const elapsed = Date.now() - startedAt;
+  if (elapsed > SLOW_MS) {
+    log(
+      `Ollama yanıtı ${(elapsed / 1000).toFixed(0)} sn sürdü — model CPU'da çalışıyor olabilir. ` +
+      'Kontrol: OLLAMA_NUM_GPU boş olmalı, ekran kartı sürücüsü/Ollama sürümü güncel mi?',
+      'WARN'
+    );
+  }
+  if (chunks) log(`Ollama bitti: ${chunks} parça, ${(elapsed / 1000).toFixed(0)} sn.`);
+
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error('Ollama boş yanıt döndürdü');
 
   if (json) {
     try {
-      return JSON.parse(content);
+      return JSON.parse(trimmed);
     } catch {
-      const match = content.match(/\{[\s\S]*\}/);
+      const match = trimmed.match(/\{[\s\S]*\}/);
       if (match) return JSON.parse(match[0]);
-      throw new Error(`Ollama geçerli JSON döndürmedi: ${content.slice(0, 200)}`);
+      throw new Error(`Ollama geçerli JSON döndürmedi: ${trimmed.slice(0, 200)}`);
     }
   }
-  return content;
+  return trimmed;
 }

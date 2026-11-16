@@ -9,6 +9,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { validateEnvFile } from '../utils/envCheck.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -82,6 +83,22 @@ async function main() {
     hasEnv ? 'var' : 'yok (bot/YouTube anahtarları boş kalır, üretim yine çalışır)',
     'npm.cmd run env:init');
 
+  // 4b) .env içeriği: bozuk sayı, tekrarlanan anahtar, tanınmayan sağlayıcı
+  if (hasEnv) {
+    const { issues } = await validateEnvFile(path.join(root, '.env'));
+    const errors = issues.filter((item) => item.level === 'error');
+    if (!issues.length) {
+      record(true, '.env içeriği', 'sayısal değerler ve anahtarlar tutarlı');
+    } else {
+      record(
+        errors.length === 0,
+        '.env içeriği',
+        issues.map((item) => item.message).join(' | '),
+        'Bozuk satırları düzeltin: `notepad .env`. Örnek temiz dosya: .env.example'
+      );
+    }
+  }
+
   // 5) Python + paketler
   const pythonBin = process.env.PYTHON_BIN || 'python';
   try {
@@ -104,7 +121,26 @@ async function main() {
 
   // 7) Birincil LLM sağlayıcısı (video başlamadan önce gerçek istek)
   const provider = (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
-  if (provider === 'gemini' || provider === 'anthropic') {
+  const { CUSTOM_PRESETS } = await import('../llm/provider.js');
+  const isCustom = provider === 'custom' || Boolean(CUSTOM_PRESETS[provider]);
+
+  if (isCustom) {
+    const started = Date.now();
+    try {
+      const { askLLM } = await import('../llm/provider.js');
+      await askLLM({ prompt: 'Sadece "ok" yaz.', temperature: 0 });
+      const endpoint = process.env.LLM_API_URL || CUSTOM_PRESETS[provider];
+      record(true, `LLM (${provider})`, `${process.env.LLM_MODEL || '?'} · ${endpoint} · ${((Date.now() - started) / 1000).toFixed(1)} sn`);
+    } catch (err) {
+      record(
+        false,
+        `LLM (${provider})`,
+        err.message,
+        'LLM_API_KEY / LLM_MODEL doğru mu? Groq: api.groq.com · OpenRouter: openrouter.ai · ' +
+        'LM Studio yerelde: LLM_PROVIDER=lmstudio (anahtar gerekmez)'
+      );
+    }
+  } else if (provider === 'gemini' || provider === 'anthropic') {
     const started = Date.now();
     try {
       if (provider === 'gemini') {
@@ -128,14 +164,19 @@ async function main() {
         record(true, `Anthropic (${provider})`, `${((Date.now() - started) / 1000).toFixed(1)} sn`);
       }
     } catch (err) {
+      const quota = /429|quota|exceeded/i.test(err.message);
       record(
         false,
         `${provider === 'gemini' ? 'Gemini' : 'Anthropic'} (birincil model)`,
-        err.message,
-        provider === 'gemini'
-          ? 'İnternet/VPN/güvenlik duvarı; GEMINI_MODEL boş bırakılırsa model otomatik seçilir. ' +
+        quota
+          ? 'Kota doldu (429) — bağlantı çalışıyor, anahtarın ücretsiz kotası bitmiş.'
+          : err.message,
+        quota
+          ? 'Yeni anahtar oluştur (aistudio.google.com/apikey — yeni proje = yeni kota) ya da bekle. ' +
+            'Alternatif ücretsiz yol: LLM_PROVIDER=groq + LLM_API_KEY + LLM_MODEL, ' +
+            'veya LLM_PROVIDER=ollama (yavaş).'
+          : 'İnternet/VPN/güvenlik duvarı; GEMINI_MODEL boş bırakılırsa model otomatik seçilir. ' +
             'Bağlantı yoksa LLM_PROVIDER=ollama yap (yavaş olur) veya LLM_NO_FALLBACK=1 ile hızlı dur.'
-          : 'ANTHROPIC_API_KEY ve internet bağlantısını kontrol et.'
       );
     }
   } else {
@@ -195,6 +236,26 @@ async function main() {
   } catch {
     record(false, 'Ollama', `ulaşılamadı (${ollamaUrl})`,
       'Ollama uygulamasını aç veya "ollama serve" çalıştır');
+  }
+
+  // Vision: gemini vision, çalışmayan bir anahtara bağlıysa sessizce devre dışı kalır
+  if ((process.env.VISION_CHECK ?? '1') !== '0') {
+    const visionProvider = (process.env.VISION_PROVIDER || 'gemini').toLowerCase();
+    const llmProvider = (process.env.LLM_PROVIDER || 'ollama').toLowerCase();
+    const visionKey = process.env.VISION_API_KEY
+      || (visionProvider === 'gemini'
+        ? (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)
+        : (process.env.LLM_API_KEY || process.env.OPENAI_API_KEY));
+    if (!visionKey && visionProvider !== 'custom') {
+      record(false, 'Görsel doğrulama', `${visionProvider} için anahtar yok`,
+        'VISION_CHECK=0 yapın veya VISION_API_KEY yazın');
+    } else if (visionProvider === 'gemini' && llmProvider !== 'gemini') {
+      record(false, 'Görsel doğrulama',
+        'gemini vision seçili ama birincil model ' + llmProvider + ' (Gemini kotası ayrı)',
+        'Gemini kotanız doluysa VISION_CHECK=0 yapın veya VISION_PROVIDER=groq + VISION_MODEL=<görsel modeli>');
+    } else {
+      record(true, 'Görsel doğrulama', `${visionProvider} açık`);
+    }
   }
 
   // Rapor

@@ -24,6 +24,20 @@ import {
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5';
 const ANTHROPIC_VERSION = '2023-06-01';
+
+/**
+ * OpenAI uyumlu ücretsiz/ucuz sağlayıcılar. Hepsi `LLM_API_KEY` + `LLM_MODEL` ile
+ * çalışır; URL otomatik gelir. (Groq ve OpenRouter'ın ücretsiz katmanı var,
+ * Cerebras ücretsiz kota veriyor, LM Studio/Ollama tamamen yerel.)
+ */
+const CUSTOM_PRESETS = {
+  groq: 'https://api.groq.com/openai/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  together: 'https://api.together.xyz/v1',
+  lmstudio: 'http://127.0.0.1:1234/v1',
+  llamacpp: 'http://127.0.0.1:8080/v1'
+};
 const BREAKER_FAILURES = Number(process.env.LLM_BREAKER_FAILURES || 2);
 
 // Çalıştırma boyunca sağlayıcı sağlığı (dosya ömrü = tek video üretimi)
@@ -68,6 +82,103 @@ async function askGemini({ system, prompt, json, temperature, numPredict }) {
   }
 }
 
+/**
+ * OpenAI uyumlu sohbet ucu (Groq, OpenRouter, Cerebras, LM Studio, llama.cpp…).
+ * Model `response_format` desteklemiyorsa (400) JSON modu olmadan tekrar denenir.
+ */
+async function askCustom({ system, prompt, json, temperature, numPredict }) {
+  const provider = activeProvider();
+  const base = (process.env.LLM_API_URL || CUSTOM_PRESETS[provider] || '').replace(/\/$/, '');
+  if (!base) {
+    throw new Error(
+      `LLM_API_URL tanımlı değil. Örnek: LLM_PROVIDER=groq + LLM_API_KEY=... + LLM_MODEL=llama-3.3-70b-versatile`
+    );
+  }
+  const endpoint = /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`;
+  const model = process.env.LLM_MODEL || '';
+  if (!model) throw new Error('LLM_MODEL tanımlı değil (ör. llama-3.3-70b-versatile)');
+  const key = process.env.LLM_API_KEY || '';
+  const timeoutMs = Number(process.env.LLM_API_TIMEOUT_MS || 60_000);
+  const attempts = Number(process.env.LLM_RETRIES || 2);
+  const messages = [
+    ...(system ? [{ role: 'system', content: system }] : []),
+    { role: 'user', content: prompt }
+  ];
+
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const body = {
+      model,
+      messages,
+      temperature,
+      max_tokens: Math.min(8192, Number(numPredict) || 1200),
+      ...(json ? { response_format: { type: 'json_object' } } : {})
+    };
+
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(key ? { Authorization: `Bearer ${key}` } : {})
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (err) {
+      const cause = err?.cause?.code || err?.message || err?.name;
+      lastError = new Error(`Bağlantı hatası (${endpoint}): ${cause}`);
+      await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+      continue;
+    }
+
+    // Bazı sağlayıcılar response_format'ı desteklemez
+    if (res.status === 400 && json) {
+      try {
+        const text = await res.text();
+        if (/response_format|json_object/i.test(text)) {
+          delete body.response_format;
+          res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(key ? { Authorization: `Bearer ${key}` } : {})
+            },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+        } else {
+          throw new Error(`API hatası (400): ${text.slice(0, 200)}`);
+        }
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+
+    if (!res.ok) {
+      const text = (await res.text()).slice(0, 300);
+      lastError = new Error(`API hatası (${res.status}): ${text}`);
+      if (res.status === 429 || res.status >= 500) {
+        const retryAfter = Number(res.headers?.get?.('retry-after') || 0) * 1000;
+        await new Promise((r) => setTimeout(r, retryAfter || Math.min(30_000, 2000 * 2 ** attempt)));
+        continue;
+      }
+      throw lastError;
+    }
+
+    const data = await res.json();
+    const content = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!content) {
+      lastError = new Error('Boş yanıt döndü');
+      continue;
+    }
+    return json ? parseJsonContent(content) : content;
+  }
+  throw lastError || new Error('Model çağrısı başarısız');
+}
+
 async function askAnthropic({ system, prompt, json, temperature, numPredict }) {
   const key = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
   if (!key) throw new Error('ANTHROPIC_API_KEY tanımlı değil');
@@ -110,6 +221,12 @@ async function askAnthropic({ system, prompt, json, temperature, numPredict }) {
   return json ? parseJsonContent(content) : content;
 }
 
+export function isCustomProvider(provider = activeProvider()) {
+  return provider === 'custom' || Boolean(CUSTOM_PRESETS[provider]);
+}
+
+export { CUSTOM_PRESETS };
+
 export function activeProvider() {
   return (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
 }
@@ -129,6 +246,13 @@ export function providerState(provider = activeProvider()) {
     if (breakerOpen('anthropic')) return { usable: false, reason: 'üst üste bağlantı hatası' };
     return { usable: true, reason: null };
   }
+  if (provider === 'custom' || CUSTOM_PRESETS[provider]) {
+    const base = process.env.LLM_API_URL || CUSTOM_PRESETS[provider];
+    if (!base) return { usable: false, reason: 'LLM_API_URL yok' };
+    if (!process.env.LLM_MODEL) return { usable: false, reason: 'LLM_MODEL yok' };
+    if (breakerOpen(provider)) return { usable: false, reason: 'üst üste bağlantı hatası' };
+    return { usable: true, reason: null };
+  }
   return { usable: false, reason: `bilinmeyen sağlayıcı: ${provider}` };
 }
 
@@ -146,7 +270,9 @@ export async function askLLM(options) {
   }
 
   try {
-    const result = provider === 'gemini' ? await askGemini(options) : await askAnthropic(options);
+    const result = provider === 'gemini'
+      ? await askGemini(options)
+      : (provider === 'anthropic' ? await askAnthropic(options) : await askCustom(options));
     resetFailures(provider);
     return result;
   } catch (err) {
