@@ -46,9 +46,10 @@ test('sayı biçimleri aynı sayıya indirgenir', () => {
 test('küçük sayılar serbest, büyük sayılar kaynağa bağlı', () => {
   const facts = ['Mısır da 3000 yıllık bal küpleri bulundu.'];
 
-  // 0-99 arası sayılar denetlenmez (gerçek hayatta serbest)
+  // 0-9 arası sayılar serbest; 10+ kaynakta olmalı (varsayılan GROUNDING_MIN_NUMBER=10)
   assert.equal(checkGrounding([{ narration: 'Bal 0 derecenin altında donmaz.' }], facts).problems.length, 0);
-  assert.equal(checkGrounding([{ narration: 'Balın içinde yüzde 17 su vardır.' }], facts).problems.length, 0);
+  const seventeen = checkGrounding([{ narration: 'Balın içinde yüzde 17 su vardır.' }], facts);
+  assert.ok(seventeen.problems.length || seventeen.warnings.length, '17 kaynakta yok');
 
   // 3000 kaynakta var, "3.000" yazımı da eşleşir
   assert.equal(checkGrounding([{ narration: 'Bal 3.000 yıl sonra bile yenilebilir.' }], facts).problems.length, 0);

@@ -55,7 +55,7 @@ function singlePassEnabled() {
 // elde olanla devam edilir.
 const SCRIPT_BUDGET_MS = Number(process.env.SCRIPT_BUDGET_SEC || 600) * 1000;
 // Bu eşiğin altındaki sayılar (0-99) kaynak denetiminden muaf
-const GROUNDING_MIN_NUMBER = Number(process.env.GROUNDING_MIN_NUMBER || 100);
+const GROUNDING_MIN_NUMBER = Number(process.env.GROUNDING_MIN_NUMBER || 10);
 // Editör puanı bunun altındaysa senaryo bir kez daha yazdırılır.
 const CRITIQUE_MIN_SCORE = Number(process.env.SCRIPT_MIN_SCORE || 7);
 const LABEL_MAX_CHARS = 18;
@@ -470,7 +470,8 @@ export function canonicalNumber(raw) {
  * 0-99 arası sayılar ("2 dakika", "%5") yaygın olduğu için serbest,
  * 100 ve üzeri (yıl, nüfus, ölçü) kaynakta yoksa halüsinasyon sayılır.
  */
-export function checkGrounding(scenes, facts = [], minChecked = 100) {
+export function checkGrounding(scenes, facts = [], minChecked = null) {
+  const threshold = minChecked ?? Number(process.env.GROUNDING_MIN_NUMBER || 10);
   const problems = [];
   const warnings = [];
   const source = (facts || []).join(' ').replace(/\s+/g, ' ');
@@ -485,7 +486,7 @@ export function checkGrounding(scenes, facts = [], minChecked = 100) {
   for (const [index, scene] of (scenes || []).entries()) {
     const numbers = (String(scene.narration || '').match(NUMBERS_RE) || [])
       .map((item) => canonicalNumber(item))
-      .filter((num) => Number(num) >= minChecked);
+      .filter((num) => Number(num) >= threshold);
     const foreign = [...new Set(numbers)].filter((num) => !sourceNumbers.has(num));
     if (foreign.length) ungrounded.push(`${index + 1}. sahne (${foreign.join(', ')})`);
   }

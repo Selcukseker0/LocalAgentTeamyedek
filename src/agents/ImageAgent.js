@@ -57,7 +57,7 @@ export class ImageAgent {
     this.lastRun = { scores: [], attempts: 0, retried: 0, duplicates: 0 };
     // Pollinations ücretsiz katmanı oran sınırlı: 429 gelirse bu süre kadar
     // bekleriz ve sonraki isteklerde de temkinli davranırız.
-    this.requestDelayMs = Number(process.env.IMAGE_REQUEST_DELAY_MS ?? 1500);
+    this.requestDelayMs = Number(process.env.IMAGE_REQUEST_DELAY_MS || 8000);
     this.penaltyMs = 0;
   }
 
