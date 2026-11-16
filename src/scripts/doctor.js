@@ -118,6 +118,25 @@ async function main() {
       'Ollama uygulamasını aç veya "ollama serve" çalıştır');
   }
 
+  // 8) Bulut LLM (Gemini): gerçekten ulaşılabiliyor mu?
+  const llmProvider = (process.env.LLM_PROVIDER || 'ollama').toLowerCase();
+  if (llmProvider === 'gemini') {
+    if (!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) {
+      record(false, 'Gemini', 'LLM_PROVIDER=gemini ama GEMINI_API_KEY boş', '.env içine GEMINI_API_KEY yaz');
+    } else {
+      try {
+        const { pingGemini } = await import('../llm/provider.js');
+        const ping = await pingGemini();
+        record(true, 'Gemini', `çalışıyor (${ping.model}, ${(ping.ms / 1000).toFixed(1)} sn)`);
+      } catch (err) {
+        record(false, 'Gemini', err.message,
+          'Model adı (GEMINI_MODEL), anahtar ve internet/VPN/proxy kontrolü; "bağlantı hatası" ise NODE_OPTIONS=--dns-result-order=ipv4first dene');
+      }
+    }
+  } else {
+    record(true, 'LLM', `${llmProvider} (senaryo ${llmProvider === 'ollama' ? 'yerel/yavaş olabilir' : 'bulut'})`);
+  }
+
   // Rapor
   let critical = 0;
   for (const item of results) {

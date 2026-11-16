@@ -44,7 +44,7 @@ const MAX_REGEN = 2;
 // elde olanla devam edilir.
 const SCRIPT_BUDGET_MS = Number(process.env.SCRIPT_BUDGET_SEC || 600) * 1000;
 // Bu eşiğin altındaki sayılar (0-99) kaynak denetiminden muaf
-const GROUNDING_MIN_NUMBER = Number(process.env.GROUNDING_MIN_NUMBER || 100);
+const GROUNDING_MIN_NUMBER = Number(process.env.GROUNDING_MIN_NUMBER || 10);
 // Editör puanı bunun altındaysa senaryo bir kez daha yazdırılır.
 const CRITIQUE_MIN_SCORE = Number(process.env.SCRIPT_MIN_SCORE || 7);
 const LABEL_MAX_CHARS = 18;

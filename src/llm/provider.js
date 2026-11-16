@@ -9,7 +9,7 @@ import { askOllama } from './ollamaClient.js';
  * API anahtarı yoksa ya da istek başarısız olursa Ollama'ya düşer (akış durmasın).
  */
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5';
 const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -24,39 +24,89 @@ function parseJsonContent(content) {
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const GEMINI_RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 120000);
+// Gemini 3.x "düşünen" bir modeldir: düşünme token'ları da maxOutputTokens'a sayılır.
+// Limit düşük kalırsa cevap JSON'un ortasında kesilir. Bu yüzden alt sınır konur.
+const GEMINI_MIN_OUTPUT_TOKENS = Number(process.env.GEMINI_MIN_OUTPUT_TOKENS || 8192);
+
 async function askGemini({ system, prompt, json, temperature, numPredict }) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY tanımlı değil');
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system || '' }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          maxOutputTokens: numPredict || 1200,
-          ...(json ? { responseMimeType: 'application/json' } : {})
-        }
-      })
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: system || '' }] },
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: Math.max(numPredict || 1200, GEMINI_MIN_OUTPUT_TOKENS),
+      ...(json ? { responseMimeType: 'application/json' } : {})
     }
-  );
+  });
 
-  if (!res.ok) {
-    throw new Error(`Gemini API hatası (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  let lastErr = new Error('Gemini yanıt vermedi');
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        // Anahtar URL yerine başlıkta gider (loglara/hata mesajlarına sızmasın)
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body,
+        signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS)
+      });
+    } catch (err) {
+      // "fetch failed" tek başına bilgi vermez; gerçek neden err.cause içindedir
+      const cause = err.cause?.code || err.cause?.message || err.name || err.message;
+      lastErr = new Error(`Gemini bağlantı hatası: ${cause}`);
+      await sleep(3000 * 2 ** attempt);
+      continue;
+    }
+
+    if (!res.ok) {
+      lastErr = new Error(`Gemini API hatası (${res.status}): ${(await res.text()).slice(0, 300)}`);
+      if (!GEMINI_RETRY_STATUS.has(res.status)) throw lastErr; // 404/400/403: tekrar denemek boşuna
+      await sleep(3000 * 2 ** attempt); // 3s, 6s, 12s, 24s
+      continue;
+    }
+
+    const data = await res.json();
+    const candidate = data?.candidates?.[0];
+    const finish = candidate?.finishReason;
+    const content = (candidate?.content?.parts || [])
+      .filter((part) => !part.thought)
+      .map((part) => part.text || '')
+      .join('')
+      .trim();
+
+    if (finish && finish !== 'STOP') console.warn(`[llm] Gemini finishReason=${finish}`);
+    if (!content) {
+      lastErr = new Error(`Gemini boş yanıt döndürdü${finish ? ` (finishReason=${finish})` : ''}`);
+      continue;
+    }
+
+    try {
+      return json ? parseJsonContent(content) : content;
+    } catch (err) {
+      lastErr = err; // yarım/bozuk JSON: yeniden sor
+    }
   }
+  throw lastErr;
+}
 
-  const data = await res.json();
-  const content = (data?.candidates?.[0]?.content?.parts || [])
-    .map((part) => part.text || '')
-    .join('')
-    .trim();
-
-  if (!content) throw new Error('Gemini boş yanıt döndürdü');
-  return json ? parseJsonContent(content) : content;
+/** doctor için: küçük bir istekle Gemini'ye ulaşılabiliyor mu? */
+export async function pingGemini() {
+  const startedAt = Date.now();
+  const text = await askGemini({
+    system: 'Kısa cevap ver.',
+    prompt: 'Sadece "tamam" yaz.',
+    json: false,
+    temperature: 0,
+    numPredict: 64
+  });
+  return { ms: Date.now() - startedAt, model: GEMINI_MODEL, text: text.slice(0, 40) };
 }
 
 async function askAnthropic({ system, prompt, json, temperature, numPredict }) {
@@ -106,6 +156,10 @@ export async function askLLM(options) {
       const result = provider === 'gemini' ? await askGemini(options) : await askAnthropic(options);
       return result;
     } catch (err) {
+      // LLM_NO_FALLBACK=1: yavaş yerel modele düşmek yerine hemen dur ve nedenini göster
+      if (process.env.LLM_NO_FALLBACK === '1') {
+        throw new Error(`${provider} başarısız ve LLM_NO_FALLBACK=1: ${err.message}`);
+      }
       console.warn(`[llm] ${provider} başarısız (${err.message}); Ollama'ya geçiliyor.`);
     }
   }

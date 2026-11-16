@@ -5,7 +5,7 @@ import { log } from '../logger.js';
  * Vision doğrulaması: üretilen görsel cümleyi anlatıyor mu?
  *
  * Desteklenen sağlayıcılar:
- *  - gemini  (GEMINI_API_KEY, varsayılan model gemini-2.0-flash)
+ *  - gemini  (GEMINI_API_KEY, varsayılan model gemini-3.8-flash)
  *  - openai  (OPENAI_API_KEY, varsayılan model gpt-4o-mini)
  *
  * Anahtar yoksa `isEnabled()` false döner ve doğrulama atlanır; üretim durmaz.
@@ -48,7 +48,7 @@ export class VisionAgent {
     const explicit = envValue('VISION_PROVIDER').toLowerCase();
     this.provider = explicit || (envValue('GEMINI_API_KEY', 'GOOGLE_API_KEY') ? 'gemini' : 'openai');
     this.model = envValue('VISION_MODEL')
-      || (this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash');
+      || (this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-3.8-flash');
     this.apiUrl = envValue('VISION_API_URL');
     this.enabled = process.env.VISION_CHECK !== '0';
   }
@@ -88,28 +88,50 @@ export class VisionAgent {
   }
 
   async geminiVision(base64, question) {
-    const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent` +
-      `?key=${this.key()}`;
-    const res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: question },
-            { inline_data: { mime_type: 'image/png', data: base64 } }
-          ]
-        }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 300, responseMimeType: 'application/json' }
-      })
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
+    // Pollinations JPEG döndürebilir; mime tipini içerikten anla
+    const mime = base64.startsWith('/9j/') ? 'image/jpeg' : 'image/png';
+    const body = JSON.stringify({
+      contents: [{
+        parts: [
+          { text: question },
+          { inline_data: { mime_type: mime, data: base64 } }
+        ]
+      }],
+      // Gemini 3.x düşünen model: düşük limit JSON'u yarıda keser (puan hiç gelmez)
+      generationConfig: { temperature: 0.1, maxOutputTokens: 4096, responseMimeType: 'application/json' }
     });
-    if (!res.ok) throw new Error(`Gemini vision hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
-    const data = await res.json();
-    const text = (data?.candidates?.[0]?.content?.parts || [])
-      .map((part) => part.text || '')
-      .join(' ');
-    return parseJsonLoose(text);
+
+    let lastErr = new Error('Gemini vision yanıt vermedi');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let res;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.key() },
+          body
+        });
+      } catch (err) {
+        lastErr = new Error(`Gemini vision bağlantı hatası: ${err.cause?.code || err.cause?.message || err.message}`);
+        await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+        continue;
+      }
+      if (!res.ok) {
+        lastErr = new Error(`Gemini vision hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
+        if (![429, 500, 502, 503, 504].includes(res.status)) throw lastErr;
+        await new Promise((r) => setTimeout(r, 3000 * 2 ** attempt));
+        continue;
+      }
+      const data = await res.json();
+      const text = (data?.candidates?.[0]?.content?.parts || [])
+        .filter((part) => !part.thought)
+        .map((part) => part.text || '')
+        .join(' ');
+      const parsed = parseJsonLoose(text);
+      if (parsed) return parsed;
+      lastErr = new Error(`Gemini vision JSON döndürmedi (finishReason=${data?.candidates?.[0]?.finishReason || '?'})`);
+    }
+    throw lastErr;
   }
 
   async openaiVision(base64, question) {
