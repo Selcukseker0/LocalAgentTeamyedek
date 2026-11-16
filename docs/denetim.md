@@ -287,3 +287,24 @@ Dosyada üretimi sessizce bozan satırlar vardı:
 
 Güvenlik: iki anahtar sohbete düz metin yapıştırıldı → **iptal edilip
 yenilenmeli** (console.groq.com/keys, aistudio.google.com/apikey).
+
+## 13. "Anahtar 401 veriyor" — değer okunurken düzeltiliyor
+
+`.env.duzeltilmis` yüklendikten sonra kullanıcı yeni Groq anahtarını sohbetten
+satıra yapıştırdı; `doctor` ve `auto-video` **401 `invalid_api_key`** verdi.
+Sebep: değerin sonunda kalan **nokta** (`LLM_API_KEY=gsk_...0mb6X.`). Dosya
+"geçerli" görünüyordu, uyarı üretim akışını durdurmuyordu.
+
+| İş | Durum | Nerede |
+|---|---|---|
+| Ayrıştırıcı (paylaşılan) | **eklendi** | `envCheck.js`: `parseEnvContent()`, `sanitizeEnvValue()` — tırnak, `# yorum`, boşluk, `_KEY/_TOKEN/_SECRET/_ID/_MODEL/_URL` alanlarında sondaki nokta |
+| `.env` yükleyici | **eklendi** | `envLoad.js`: değerleri temizleyerek `process.env`'e yazar, `cleaned` raporu üretir, kabuk değerini ezmez, tek kez okur |
+| Yükleme sırası | **eklendi** | `envBootstrap.js` giriş betiklerinin **ilk** import'u (`autoVideo`, `doctor`, `index`, `whiteboardDemo`, `youtubeAuth`, `initEnv`) — modül seviyesindeki `GROUNDING_MIN_NUMBER` gibi sabitler artık temiz değeri görür; `config.js` de yedek olarak çağırır |
+| 401 hata mesajı | **eklendi** | `provider.js`: `anahtar reddedildi — LLM_API_KEY: 56 karakter · gsk_…b6X` (tam anahtar asla yazılmaz), 401/403 tekrar denenmez |
+| `doctor` uyarı seviyesi | **eklendi** | uyarı artık ❌/✅ değil **⚠️ ** olarak basılır ve "sorun" sayılmaz; sonda `⚠️ N uyarı var (üretim çalışır)` |
+| `doctor` anahtar biçimi | **eklendi** | `keyFormatWarning()`: groq `^gsk_[A-Za-z0-9]{40,}$`, openrouter `sk-or-v1-…`, gemini, anthropic |
+
+Doğrulama: `.env`'e `LLM_API_KEY=gsk_TESTKEY0mb6X.   ` yazıldı →
+`process.env.LLM_API_KEY === "gsk_TESTKEY0mb6X"`, `doctor` iki ⚠️ satırı yazdı
+(`.env içeriği`, `LLM anahtarı`), `auto-video` uyarıyla **devam etti** (hata yok).
+`npm test` → **54/54** (`test/envLoad.test.js` 7 test + 401 parmak izi testi).

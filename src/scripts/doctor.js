@@ -8,8 +8,9 @@
  *   npm.cmd run doctor
  */
 
+import '../utils/envBootstrap.js';
 import { execFile } from 'node:child_process';
-import { validateEnvFile } from '../utils/envCheck.js';
+import { fingerprintSecret, keyFormatWarning, validateEnvFile } from '../utils/envCheck.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -18,8 +19,13 @@ const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const results = [];
 
-function record(ok, label, detail, fix) {
-  results.push({ ok, label, detail, fix });
+function record(ok, label, detail, fix, level) {
+  results.push({ ok, label, detail, fix, level: level || (ok ? 'ok' : 'error') });
+}
+
+/** Uyarı: sorun değil ama sessizce yanlış çalışmasın diye görünmeli. */
+function warn(label, detail, fix) {
+  results.push({ ok: true, label, detail, fix, level: 'warn' });
 }
 
 async function exists(target) {
@@ -85,17 +91,30 @@ async function main() {
 
   // 4b) .env içeriği: bozuk sayı, tekrarlanan anahtar, tanınmayan sağlayıcı
   if (hasEnv) {
-    const { issues } = await validateEnvFile(path.join(root, '.env'));
+    const { issues, cleaned } = await validateEnvFile(path.join(root, '.env'));
     const errors = issues.filter((item) => item.level === 'error');
-    if (!issues.length) {
-      record(true, '.env içeriği', 'sayısal değerler ve anahtarlar tutarlı');
+    const warns = issues.filter((item) => item.level !== 'error');
+    const detail = issues.length
+      ? issues.map((item) => item.message).join(' | ')
+      : 'sayısal değerler ve anahtarlar tutarlı';
+    if (!errors.length && !warns.length) {
+      record(true, '.env içeriği', detail);
+    } else if (!errors.length) {
+      // Uyarı "✅" görünmesin: sessizce düzeltilmiş olsa da dosya hâlâ kirli.
+      warn('.env içeriği', detail, 'Bozuk satırları düzeltin: `notepad .env`');
     } else {
-      record(
-        errors.length === 0,
-        '.env içeriği',
-        issues.map((item) => item.message).join(' | '),
-        'Bozuk satırları düzeltin: `notepad .env`. Örnek temiz dosya: .env.example'
-      );
+      record(false, '.env içeriği', detail,
+        'Bozuk satırları düzeltin: `notepad .env`. Örnek temiz dosya: .env.duzeltilmis');
+    }
+    // Anahtar biçimi: "gsk_..." beklenirken başka bir şey yapıştırılmış olabilir
+    const keyWarn = keyFormatWarning(process.env.LLM_PROVIDER, process.env.LLM_API_KEY);
+    if (keyWarn) {
+      warn('LLM anahtarı', keyWarn, 'Anahtarı yeniden kopyalayın (başında/sonunda boşluk veya nokta olmasın)');
+    }
+    if (cleaned.length && !issues.some((item) => item.key && item.message.includes('düzeltildi'))) {
+      warn('.env düzeltmesi',
+        cleaned.map((item) => `${item.key} (${item.line}. satır): ${item.what}`).join(' | '),
+        'Değerler okunurken temizlendi, üretim çalışır; dosyayı da düzeltin');
     }
   }
 
@@ -136,7 +155,9 @@ async function main() {
         false,
         `LLM (${provider})`,
         err.message,
-        'LLM_API_KEY / LLM_MODEL doğru mu? Groq: api.groq.com · OpenRouter: openrouter.ai · ' +
+        `LLM_API_KEY: ${fingerprintSecret(process.env.LLM_API_KEY)} · LLM_MODEL: ${process.env.LLM_MODEL || 'boş'}. ` +
+        '401 = anahtar geçersiz: console.groq.com/keys üzerinden yenisini al, satırın sonunda ' +
+        'boşluk/nokta bırakma. Groq: api.groq.com · OpenRouter: openrouter.ai · ' +
         'LM Studio yerelde: LLM_PROVIDER=lmstudio (anahtar gerekmez)'
       );
     }
@@ -260,10 +281,14 @@ async function main() {
 
   // Rapor
   let critical = 0;
+  let warned = 0;
   for (const item of results) {
-    const mark = item.ok ? '✅' : '❌';
+    const mark = item.level === 'warn' ? '⚠️ ' : (item.ok ? '✅' : '❌');
     console.log(`${mark} ${item.label}: ${item.detail}`);
-    if (!item.ok) {
+    if (item.level === 'warn') {
+      warned += 1;
+      if (item.fix) console.log(`   → ${item.fix}`);
+    } else if (!item.ok) {
       critical += 1;
       if (item.fix) console.log(`   → ${item.fix}`);
     }
@@ -271,8 +296,10 @@ async function main() {
 
   const warningsOnly = results.filter((r) => !r.ok && r.label === '.env dosyası').length;
   console.log('');
-  if (critical === 0) {
+  if (critical === 0 && warned === 0) {
     console.log('✅ Her şey hazır. `npm.cmd run auto-video` ile video üretebilirsin.');
+  } else if (critical === 0) {
+    console.log(`⚠️  ${warned} uyarı var (üretim çalışır). "→" satırlarını düzeltmek iyi olur.`);
   } else if (critical === warningsOnly) {
     console.log('⚠️  Zorunlu bileşenler tamam; sadece .env eksik (bot/YouTube için gerekli).');
   } else {

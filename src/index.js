@@ -1,3 +1,4 @@
+import './utils/envBootstrap.js';
 import cron from 'node-cron';
 import { config } from './config.js';
 import { log } from './logger.js';

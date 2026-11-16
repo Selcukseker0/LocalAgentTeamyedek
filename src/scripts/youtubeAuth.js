@@ -1,3 +1,4 @@
+import '../utils/envBootstrap.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import { google } from 'googleapis';

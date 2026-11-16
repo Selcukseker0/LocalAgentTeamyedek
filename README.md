@@ -514,6 +514,31 @@ Kurallar: her anahtar **bir kez**, sayısal alanlara harf yazma, değerin sonund
 boşluk/nokta bırakma, `GEMINI_MODEL`/`VISION_MODEL` gibi model adlarını
 **uydurma** (boş bırak, kod çözer).
 
+### Değerler artık okunurken düzeltiliyor
+
+Sohbetten anahtar kopyalayınca sonunda nokta kalıyor: `LLM_API_KEY=gsk_...0mb6X.`
+→ Groq **401 "Invalid API Key"**. Uyarı vermek yetmediği için `.env` kendi
+okuyucumuzla yükleniyor (`src/utils/envLoad.js`) ve şunlar otomatik temizleniyor:
+
+- baştaki/sondaki **boşluk**
+- `_KEY` / `_TOKEN` / `_SECRET` / `_ID` / `_MODEL` / `_URL` ile biten alanlarda
+  sondaki **nokta** (serbest metinlerde nokta korunur)
+- `"..."` / `'...'` tırnakları ve `# yorum` kuyruğu
+
+```
+🔧 .env: LLM_API_KEY — 31. satırda sonundaki "." temizlendi (okurken düzeltildi).
+```
+
+401 alırsan hata mesajı anahtarın parmak izini de yazar, tamamını değil:
+
+```
+❌ LLM (groq): API hatası (401): anahtar reddedildi — LLM_API_KEY: 56 karakter · gsk_…b6X
+   → 401 = anahtar geçersiz: console.groq.com/keys üzerinden yenisini al …
+```
+
+`doctor` ayrıca anahtarın **biçimini** denetler (Groq `gsk_` + ~48 karakter,
+OpenRouter `sk-or-v1-`…): eksik/fazla yapıştırma uyarı olarak görünür.
+
 ## Gemini / model bağlantısı ve yavaşlık
 
 `npm run doctor` artık birincil modeli **gerçekten çağırır**; video başlatmadan
