@@ -52,6 +52,7 @@ async function main() {
     text: argValue('text'),
     scenes: manualScenes,
     review: hasFlag('review'),
+    scriptOnly: hasFlag('script-only'),
     onStep: ({ step, data }) => {
       if (step === 'topic') {
         console.log(`\n📌 Konu: ${data.topicObj.topic}  [${data.topicObj.category}]`);
@@ -113,6 +114,20 @@ async function main() {
       }
     }
   });
+
+  if (run.scriptOnly) {
+    console.log('\n📝 Senaryo hazır (--script-only): ses ve video üretilmedi.');
+    console.log(`   Dosya: ${run.scriptPath}`);
+    console.log(`   Başlık: ${script.title}`);
+    console.log(`   Kelime: ${countWords(script.narration)} | ~${estimateSeconds(script.narration).toFixed(0)} sn`);
+    (script.scenes || []).forEach((scene, i) => {
+      const objects = (scene.visualObjects || []).join(', ') || '-';
+      console.log(`   ${String(i + 1).padStart(2)}. ${scene.narration}`);
+      console.log(`       nesneler: ${objects}`);
+    });
+    console.log(`\n   Süre: ${((Date.now() - started) / 1000).toFixed(0)} sn`);
+    return;
+  }
 
   const { workDir, script, video, metadataPath } = run;
   const stat = await fs.stat(video.videoPath);

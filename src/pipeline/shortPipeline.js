@@ -55,6 +55,7 @@ async function audioSeconds(audioPath) {
  * @param {object|null} options.voiceAgent  ses ajanı (test için değiştirilebilir)
  * @param {object|null} options.videoAgent  video ajanı (test için değiştirilebilir)
  * @param {(event: {step: string, data: object}) => void} options.onStep
+ * @param {boolean} options.scriptOnly     sadece senaryoyu üret ve dur (ses/render yok)
  */
 export async function generateShort({
   topic = null,
@@ -67,7 +68,8 @@ export async function generateShort({
   // Test/gömme için dışarıdan ajan verilebilir (varsayılan: gerçek ajanlar)
   voiceAgent = null,
   videoAgent = null,
-  onStep = () => {}
+  onStep = () => {},
+  scriptOnly = false
 } = {}) {
   const trend = new TrendAgent();
   const scriptAgent = new ScriptAgent();
@@ -138,6 +140,13 @@ export async function generateShort({
     }
     timings.review = (Date.now() - reviewStart) / 1000;
     onStep({ step: 'review', data: { verdict, seconds: timings.review } });
+  }
+
+  // Sadece senaryo: ses/görsel/render atlanır (metni hızlı denetlemek için)
+  if (scriptOnly) {
+    const scriptPath = path.join(dir, 'script.json');
+    await fs.writeFile(scriptPath, JSON.stringify(scriptObj, null, 2), 'utf8');
+    return { workDir: dir, topicObj, script: scriptObj, scriptPath, scriptOnly: true, timings };
   }
 
   // 3) Ses (zorunlu)

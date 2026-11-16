@@ -1,133 +1,99 @@
-import { config } from '../config.js';
-import { askOllama } from './ollamaClient.js';
-
 /**
  * Tek bir "LLM sağlayıcı" arayüzü.
  * LLM_PROVIDER=ollama | gemini | anthropic
  *
  * Hepsinde imza aynı: { system, prompt, json, temperature, numPredict } -> nesne veya metin.
- * API anahtarı yoksa ya da istek başarısız olursa Ollama'ya düşer (akış durmasın).
+ *
+ * Davranış kuralları:
+ *  - Birincil sağlayıcı hata verirse Ollama'ya düşülür (akış durmasın).
+ *  - `LLM_NO_FALLBACK=1` ise düşülmez, hata hemen yukarı çıkar: yavaş yerel
+ *    modelle 10 dakika beklemek yerine sorunu görmek daha iyi.
+ *  - Aynı çalıştırmada bağlantı üst üste `LLM_BREAKER_FAILURES` kez koparsa
+ *    sağlayıcı "devre dışı" sayılır; sonraki çağrılar boşuna 3×60 sn beklemez.
  */
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+import { config } from '../config.js';
+import { askOllama } from './ollamaClient.js';
+import {
+  geminiGenerate,
+  geminiOutputTokens,
+  isGeminiConfigured,
+  parseJsonContent,
+  resolveGeminiModel
+} from './gemini.js';
+
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5';
 const ANTHROPIC_VERSION = '2023-06-01';
+const BREAKER_FAILURES = Number(process.env.LLM_BREAKER_FAILURES || 2);
 
-function parseJsonContent(content) {
-  const text = String(content || '').trim();
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error(`Model geçerli JSON döndürmedi: ${text.slice(0, 200)}`);
-  }
+// Çalıştırma boyunca sağlayıcı sağlığı (dosya ömrü = tek video üretimi)
+const failures = new Map();
+
+function breakerOpen(provider) {
+  return (failures.get(provider) || 0) >= BREAKER_FAILURES;
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const GEMINI_RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
-const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 120000);
-// Gemini 3.x "düşünen" bir modeldir: düşünme token'ları da maxOutputTokens'a sayılır.
-// Limit düşük kalırsa cevap JSON'un ortasında kesilir. Bu yüzden alt sınır konur.
-const GEMINI_MIN_OUTPUT_TOKENS = Number(process.env.GEMINI_MIN_OUTPUT_TOKENS || 8192);
+function noteFailure(provider) {
+  failures.set(provider, (failures.get(provider) || 0) + 1);
+}
+
+function resetFailures(provider) {
+  failures.delete(provider);
+}
 
 async function askGemini({ system, prompt, json, temperature, numPredict }) {
-  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!key) throw new Error('GEMINI_API_KEY tanımlı değil');
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-  const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: system || '' }] },
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature,
-      maxOutputTokens: Math.max(numPredict || 1200, GEMINI_MIN_OUTPUT_TOKENS),
-      ...(json ? { responseMimeType: 'application/json' } : {})
-    }
+  const { content, finishReason } = await geminiGenerate({
+    body: {
+      systemInstruction: { parts: [{ text: system || '' }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature,
+        // Düşünme token'ları da bu limite sayılır: 900 gibi düşük değer JSON'u kesiyordu
+        maxOutputTokens: geminiOutputTokens(numPredict),
+        ...(json ? { responseMimeType: 'application/json' } : {})
+      }
+    },
+    label: 'gemini'
   });
 
-  let lastErr = new Error('Gemini yanıt vermedi');
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        // Anahtar URL yerine başlıkta gider (loglara/hata mesajlarına sızmasın)
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body,
-        signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS)
-      });
-    } catch (err) {
-      // "fetch failed" tek başına bilgi vermez; gerçek neden err.cause içindedir
-      const cause = err.cause?.code || err.cause?.message || err.name || err.message;
-      lastErr = new Error(`Gemini bağlantı hatası: ${cause}`);
-      await sleep(3000 * 2 ** attempt);
-      continue;
-    }
+  if (!json) return content;
 
-    if (!res.ok) {
-      lastErr = new Error(`Gemini API hatası (${res.status}): ${(await res.text()).slice(0, 300)}`);
-      if (!GEMINI_RETRY_STATUS.has(res.status)) throw lastErr; // 404/400/403: tekrar denemek boşuna
-      await sleep(3000 * 2 ** attempt); // 3s, 6s, 12s, 24s
-      continue;
-    }
-
-    const data = await res.json();
-    const candidate = data?.candidates?.[0];
-    const finish = candidate?.finishReason;
-    const content = (candidate?.content?.parts || [])
-      .filter((part) => !part.thought)
-      .map((part) => part.text || '')
-      .join('')
-      .trim();
-
-    if (finish && finish !== 'STOP') console.warn(`[llm] Gemini finishReason=${finish}`);
-    if (!content) {
-      lastErr = new Error(`Gemini boş yanıt döndürdü${finish ? ` (finishReason=${finish})` : ''}`);
-      continue;
-    }
-
-    try {
-      return json ? parseJsonContent(content) : content;
-    } catch (err) {
-      lastErr = err; // yarım/bozuk JSON: yeniden sor
-    }
+  try {
+    return parseJsonContent(content);
+  } catch (err) {
+    // MAX_TOKENS ile kesildiyse içerik yarım kalmıştır; yukarıda onarım denendi
+    throw new Error(
+      `${err.message}${finishReason === 'MAX_TOKENS' ? ' (yanıt MAX_TOKENS ile kesildi)' : ''}`
+    );
   }
-  throw lastErr;
-}
-
-/** doctor için: küçük bir istekle Gemini'ye ulaşılabiliyor mu? */
-export async function pingGemini() {
-  const startedAt = Date.now();
-  const text = await askGemini({
-    system: 'Kısa cevap ver.',
-    prompt: 'Sadece "tamam" yaz.',
-    json: false,
-    temperature: 0,
-    numPredict: 64
-  });
-  return { ms: Date.now() - startedAt, model: GEMINI_MODEL, text: text.slice(0, 40) };
 }
 
 async function askAnthropic({ system, prompt, json, temperature, numPredict }) {
   const key = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
   if (!key) throw new Error('ANTHROPIC_API_KEY tanımlı değil');
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': ANTHROPIC_VERSION
-    },
-    body: JSON.stringify({
-      model: ANTHROPIC_MODEL,
-      max_tokens: numPredict || 1200,
-      temperature,
-      system,
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': ANTHROPIC_VERSION
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || ANTHROPIC_MODEL,
+        max_tokens: Math.min(8192, Number(numPredict) || 1200),
+        temperature,
+        system,
+        messages: [{ role: 'user', content: prompt }]
+      }),
+      signal: AbortSignal.timeout(Number(process.env.ANTHROPIC_TIMEOUT_MS || 90_000))
+    });
+  } catch (err) {
+    const cause = err?.cause?.code || err?.message || err?.name;
+    throw new Error(`Anthropic bağlantı hatası: ${cause}`);
+  }
 
   if (!res.ok) {
     throw new Error(`Anthropic API hatası (${res.status}): ${(await res.text()).slice(0, 300)}`);
@@ -148,23 +114,62 @@ export function activeProvider() {
   return (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
 }
 
+/** Bir sağlayıcının bu çalıştırmada kullanılabilir olup olmadığını söyler (doctor/log için). */
+export function providerState(provider = activeProvider()) {
+  if (provider === 'ollama') return { usable: true, reason: null };
+  if (provider === 'gemini') {
+    if (!isGeminiConfigured()) return { usable: false, reason: 'GEMINI_API_KEY yok' };
+    if (breakerOpen('gemini')) return { usable: false, reason: 'üst üste bağlantı hatası' };
+    return { usable: true, reason: null };
+  }
+  if (provider === 'anthropic') {
+    if (!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY)) {
+      return { usable: false, reason: 'ANTHROPIC_API_KEY yok' };
+    }
+    if (breakerOpen('anthropic')) return { usable: false, reason: 'üst üste bağlantı hatası' };
+    return { usable: true, reason: null };
+  }
+  return { usable: false, reason: `bilinmeyen sağlayıcı: ${provider}` };
+}
+
 export async function askLLM(options) {
   const provider = activeProvider();
+  const noFallback = process.env.LLM_NO_FALLBACK === '1';
 
-  if (provider === 'gemini' || provider === 'anthropic') {
-    try {
-      const result = provider === 'gemini' ? await askGemini(options) : await askAnthropic(options);
-      return result;
-    } catch (err) {
-      // LLM_NO_FALLBACK=1: yavaş yerel modele düşmek yerine hemen dur ve nedenini göster
-      if (process.env.LLM_NO_FALLBACK === '1') {
-        throw new Error(`${provider} başarısız ve LLM_NO_FALLBACK=1: ${err.message}`);
-      }
-      console.warn(`[llm] ${provider} başarısız (${err.message}); Ollama'ya geçiliyor.`);
-    }
+  if (provider === 'ollama') return askOllama(options);
+
+  if (breakerOpen(provider)) {
+    const why = `${provider} bu çalıştırmada ${BREAKER_FAILURES} kez üst üste başarısız oldu`;
+    if (noFallback) throw new Error(`${why}; LLM_NO_FALLBACK=1 olduğu için durduruldu.`);
+    console.warn(`[llm] ${why}; kalan adımlar Ollama ile yazılacak (yavaş olacak).`);
+    return askOllama(options);
   }
 
-  return askOllama(options);
+  try {
+    const result = provider === 'gemini' ? await askGemini(options) : await askAnthropic(options);
+    resetFailures(provider);
+    return result;
+  } catch (err) {
+    noteFailure(provider);
+    if (noFallback) {
+      throw new Error(
+        `${provider} başarısız: ${err.message} — LLM_NO_FALLBACK=1 olduğu için Ollama'ya düşülmedi.`
+      );
+    }
+    const rest = BREAKER_FAILURES - (failures.get(provider) || 0);
+    console.warn(
+      `[llm] ${provider} başarısız (${err.message}); Ollama'ya geçiliyor. ` +
+      `Bu, yavaş yerel modelle 3-10 dakika sürebilir` +
+      `${rest > 0 ? `; ${rest} hatadan sonra bu çalıştırmada tekrar denenmeyecek.` : '.'}`
+    );
+    return askOllama(options);
+  }
+}
+
+/** Doktor/testler için: bilinen modelleri listeler. */
+export async function listGeminiModels() {
+  const model = await resolveGeminiModel();
+  return model;
 }
 
 export { config as llmConfig };

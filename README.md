@@ -449,6 +449,52 @@ Hız için:
 - Karaoke altyazı ek maliyet getirmez (kelime zamanları zaten TTS'ten geliyor).
 - `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
 
+## Gemini / model bağlantısı ve yavaşlık
+
+`npm run doctor` artık birincil modeli **gerçekten çağırır**; video başlatmadan
+önce bağlantıyı görürsünüz:
+
+```
+✅ Gemini (gemini): gemini-3.8-flash · 1.4 sn
+✅ Ollama: çalışıyor (12 ms), qwen2.5:7b bulundu
+❌ Ollama hızı: 4.8 sn (12 kelime) · ⚠️ yavaş (~0.4 sn/kelime)
+```
+
+- **`Gemini ❌ … TimeoutError / fetch failed`** → internet, VPN, güvenlik duvarı
+  veya DNS. Kod artık IPv4'ü öne alır (`LLM_DNS_ORDER=ipv4first`), 45 sn'de
+  vazgeçer (`GEMINI_TIMEOUT_MS`), 429/5xx/ağ hatasında üstel bekleme ile tekrar
+  dener ve **gerçek hata kodunu** yazar (ECONNRESET, ENOTFOUND…).
+- **`gemini-2.0-flash artık yok` (404)** → kendiliğinden çözülür: kod API'nin
+  önerdiği model adına geçer (`use models/X`), olmazsa model listesinden en yeni
+  flash'ı seçer. `GEMINI_MODEL` **boş bırakılabilir**.
+- **`LLM_NO_FALLBACK=1`** → birincil model çalışmazsa Ollama'ya düşmez, hemen
+  hata verir. Bağlantı sorunu varken bunu açın: yoksa her istem 45 sn × 2 deneme
+  bekler ve sonunda yavaş modelle yazmaya başlar.
+- **Devre kesici** → üst üste `LLM_BREAKER_FAILURES` (2) hatadan sonra birincil
+  sağlayıcı o çalıştırmada bırakılır; kalan adımlar boşuna beklemez.
+
+### Sadece senaryoyu görmek (ses/render beklemeden)
+
+```powershell
+npm.cmd run auto-video -- --script-only --topic "Bal neden bozulmaz?"
+```
+
+Senaryoyu üretir, cümleleri ve her cümlenin çizilebilir nesnelerini ekrana
+basar, `script.json` yazar ve **durur** (ses, görsel, render yok). Metin
+kalitesini 20 dakika bekleyip video üretmeden denetlemek için.
+
+### Yalnızca Ollama ile çalışırken hız
+
+CPU'da `qwen2.5:7b` her çağrıda 3-9 dakika harcıyordu ve senaryo 5-6 çağrı
+istiyordu. Artık:
+
+- `SCRIPT_SINGLE_PASS=auto` (varsayılan): `LLM_PROVIDER=ollama` iken senaryo
+  **tek çağrıda** yazılır. Toplam süre ~20 dk yerine ~5-7 dk.
+- `OLLAMA_TIMEOUT_MS` (5 dk) tek çağrının sonsuza kadar asılı kalmasını engeller.
+- 90 sn'den uzun yanıtta "CPU'da çalışıyor olabilir" uyarısı basılır.
+- Daha hızlısı: `ollama pull qwen2.5:3b` + `OLLAMA_MODEL=qwen2.5:3b`
+  (kalite düşer ama 7b CPU'da kullanılamayacak kadar yavaşsa tek çare).
+
 ## Senaryo üretilemedi / yanlış konu (sık görülen)
 
 Bu hatalar artık büyük ölçüde otomatik çözülüyor, ama belirtileri bilmek işe yarar:

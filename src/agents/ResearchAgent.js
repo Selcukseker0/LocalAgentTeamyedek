@@ -205,13 +205,26 @@ function tokenSet(text) {
   );
 }
 
-/** Modelin uydurduğu bilgiyi ayıklar: kaynak metinde geçmeyen cümle kabul edilmez. */
-function groundedInSource(fact, sourceTokens) {
+/**
+ * Modelin uydurduğu bilgiyi ayıklar.
+ * Kural: kelimelerin en az %45'i kaynakta geçmeli VE olgudaki sayı/tarihler
+ * kaynakta bulunmalı. ("toz şeker yedirmek kanunen yasaldır" gibi uydurmalar
+ * 0.30 eşiğiyle geçiyordu.)
+ */
+function groundedInSource(fact, sourceTokens, sourceNumbers = new Set()) {
   const tokens = tokenSet(fact);
   if (!tokens.size) return false;
   let hits = 0;
   for (const token of tokens) if (sourceTokens.has(token)) hits += 1;
-  return hits / tokens.size >= 0.3;
+  const overlap = hits / tokens.size;
+  if (overlap < Number(process.env.RESEARCH_FACT_OVERLAP || 0.45)) return false;
+
+  const numbers = String(fact).match(/\d+(?:[.,]\d+)?/g) || [];
+  for (const raw of numbers) {
+    const canonical = raw.replace(/\./g, '').replace(',', '.');
+    if (sourceNumbers.size && !sourceNumbers.has(canonical)) return false;
+  }
+  return true;
 }
 
 /**
@@ -223,6 +236,9 @@ export async function extractFacts(source, topic = '', limit = TARGET_FACTS) {
   if (!text) return [];
 
   const sourceTokens = tokenSet(text);
+  const sourceNumbers = new Set(
+    (text.match(/\d+(?:[.,]\d+)?/g) || []).map((item) => item.replace(/\./g, '').replace(',', '.'))
+  );
 
   try {
     const raw = await askLLM({
@@ -257,7 +273,7 @@ export async function extractFacts(source, topic = '', limit = TARGET_FACTS) {
       const fact = String(item || '').replace(/\s+/g, ' ').trim();
       const words = fact.split(' ').filter(Boolean).length;
       if (words < 5 || words > 26) continue;
-      if (!groundedInSource(fact, sourceTokens)) {
+      if (!groundedInSource(fact, sourceTokens, sourceNumbers)) {
         dropped += 1;
         continue;
       }

@@ -210,3 +210,28 @@ Doğrulama (Ollama olmadan, sahte LLM ile gerçek akış):
 - Araştırma testleri gerçek olayı kapsıyor: "Buzun sırrı ne?" + "Sırrı Paşa" → **null**; "Buz" → seçilir; "bal" ≠ "balık".
 - `npm test` → **27/27** (9 yeni test: `test/research.test.js`, `test/scriptSplit.test.js`).
 - `npm run whiteboard-demo` → 46.2 s / 1386 kare / 8.4 MB video, render yolu bozulmadı.
+
+## 10. "10 dakika bekliyorum, aynı hata" turu (Gemini + yavaşlık)
+
+Kullanıcının logu: Gemini her çağrıda `TimeoutError` / `fetch failed` → Ollama'ya
+düşüyor → 7b CPU'da araştırma 338 sn, plan 554 sn → video hiç çıkmıyor.
+
+| Sorun | Düzeltme |
+|---|---|
+| Model adı emekliye ayrıldı (`gemini-2.0-flash` → 404 "use models/X") | `src/llm/gemini.js`: 404 gövdesindeki öneri otomatik benimsenir; yoksa model listesinden en yeni flash seçilir. `GEMINI_MODEL` boş bırakılabilir |
+| Bağlantı hatasında istek asılı kalıyordu | `GEMINI_TIMEOUT_MS` (45 sn) + `AbortSignal.timeout`, ağ hatasında üstel bekleme ile `LLM_RETRIES` (2) tekrar |
+| `fetch failed` nedeni görünmüyordu | Gerçek kod yazılıyor (ECONNRESET/ENOTFOUND/TimerError); Windows IPv6 takılmasına karşı `dns.setDefaultResultOrder('ipv4first')` |
+| Gemini hatası → sessizce 10 dk yavaş model | `LLM_NO_FALLBACK` (0/1) + devre kesici (`LLM_BREAKER_FAILURES=2`): iki hatadan sonra kalan adımlar boşuna beklemez |
+| Ollama çağrısı sonsuza kadar sürebiliyordu | `OLLAMA_TIMEOUT_MS` (5 dk) + `OLLAMA_SLOW_WARN_MS` (90 sn) yavaşlık uyarısı + 404'te "ollama pull …" mesajı |
+| Senaryo için 5-6 LLM çağrısı (CPU'da ~20 dk) | `SCRIPT_SINGLE_PASS=auto`: ollama ile senaryo **tek çağrıda** yazılır (plan+bölüm+ek turlar yok) → ~5-7 dk |
+| Yarım JSON | `parseJsonContent` kapanmamış `{`/`[` onarımı; `finishReason` loglanır |
+| Vision modeli de eski adsız/300 token | `geminiVision` ortak istemciyi kullanır (model otomatik), `maxOutputTokens` 2048, JPEG/PNG/WebP mime sniffing |
+| Uydurma "doğrulanmış bilgi" ("toz şeker yedirmek kanunen yasaldır") | `RESEARCH_FACT_OVERLAP` 0.30 → 0.45 + olgudaki sayı/tarihler kaynakta olmalı |
+| `doctor` Gemini'yi hiç denemiyordu | Gerçek istek: modeli çözer, 1 cümle üretir, süreyi yazar; Ollama için 12 kelimelik hız ölçümü ve GPU ipucu |
+
+Doğrulama: sahte `fetch` ile 7 senaryo (`test/provider.test.js`):
+404 model önerisi → yeni adla devam; 503 → tekrar; ağ kopması → denemeler
+tükenince Ollama; `LLM_NO_FALLBACK=1` → hata; devre kesici → Gemini hiç
+denenmez; yarım JSON onarımı; model adı önerisi/model seçimi.
+`npm test` → **34/34**. Tek geçiş simülasyonu: 13 cümlelik girdi → **1 LLM
+çağrısı**, 11 sahne, 86 kelime, ~30 sn senaryo.

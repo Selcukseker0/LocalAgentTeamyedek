@@ -55,6 +55,10 @@ export class ImageAgent {
     this.apiUrl = process.env.IMAGE_API_URL || '';
     this.apiKey = envValue('IMAGE_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY');
     this.lastRun = { scores: [], attempts: 0, retried: 0, duplicates: 0 };
+    // Pollinations ücretsiz katmanı oran sınırlı: 429 gelirse bu süre kadar
+    // bekleriz ve sonraki isteklerde de temkinli davranırız.
+    this.requestDelayMs = Number(process.env.IMAGE_REQUEST_DELAY_MS || 8000);
+    this.penaltyMs = 0;
   }
 
   keyFor(provider) {
@@ -121,28 +125,45 @@ export class ImageAgent {
     const [w, h] = String(this.size || '1024x1536').split('x').map((n) => parseInt(n, 10));
     const width = Number.isFinite(w) ? w : 1024;
     const height = Number.isFinite(h) ? h : 1536;
-    const seed = Math.floor(Math.random() * 1e6);
-    const url =
-      `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 1400))}` +
-      `?width=${width}&height=${height}&model=${this.model || 'flux'}&nologo=true&seed=${seed}`;
+    const attempts = Number(process.env.IMAGE_429_RETRIES || 4);
 
-    // Anonim katman yaklaşık 15 sn'de 1 istek verir: 429 gelirse bekleyip aynı isteği tekrarla
-    // (bu bekleme "deneme hakkı"ndan sayılmaz, yoksa sahne boşuna katalog çizime düşer).
-    let res;
-    for (let wait = 0; wait < 4; wait += 1) {
-      res = await fetchWithTimeout(url, { headers: { Accept: 'image/jpeg,image/png' } }, 120000);
-      if (res.status !== 429 && res.status !== 503) break;
-      const retryAfter = Number(res.headers?.get?.('retry-after'));
-      const seconds = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 60) : 16;
-      log('ImageAgent', `Pollinations oran sınırı (${res.status}), ${seconds} sn bekleniyor.`, 'WARN');
-      await new Promise((r) => setTimeout(r, seconds * 1000));
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const seed = Math.floor(Math.random() * 1e6);
+      const url =
+        `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 1400))}` +
+        `?width=${width}&height=${height}&model=${this.model || 'flux'}&nologo=true&seed=${seed}`;
+
+      const res = await fetchWithTimeout(url, { headers: { Accept: 'image/jpeg,image/png' } }, 120_000);
+
+      // Oran sınırı / geçici sunucu hatası: bekle ve aynı isteği tekrarla
+      if (res.status === 429 || res.status >= 500) {
+        const retryAfter = Number(res.headers?.get?.('retry-after') || 0) * 1000;
+        const wait = retryAfter || Math.min(60_000, 5000 * 2 ** attempt);
+        this.penaltyMs = Math.max(this.penaltyMs, wait);
+        log(
+          'ImageAgent',
+          `Pollinations ${res.status}; ${Math.round(wait / 1000)} sn bekleyip tekrar denenecek ` +
+          `(${attempt + 1}/${attempts}). Sonraki isteklerde de bu kadar beklenecek.`,
+          'WARN'
+        );
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        lastError = new Error(`Pollinations hatası (${res.status})`);
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Pollinations hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
+      }
+      const type = res.headers?.get?.('content-type') || '';
+      if (!type.startsWith('image/')) {
+        throw new Error(`Pollinations görsel döndürmedi (content-type: ${type || 'bilinmiyor'})`);
+      }
+      // Başarılı istek: cezayı yavaşça azalt
+      this.penaltyMs = Math.floor(this.penaltyMs * 0.6);
+      return Buffer.from(await res.arrayBuffer());
     }
-    if (!res.ok) throw new Error(`Pollinations hatası (${res.status}): ${(await res.text()).slice(0, 160)}`);
-    const type = res.headers?.get?.('content-type') || '';
-    if (!type.startsWith('image/')) {
-      throw new Error(`Pollinations görsel döndürmedi (content-type: ${type || 'bilinmiyor'})`);
-    }
-    return Buffer.from(await res.arrayBuffer());
+    throw lastError || new Error('Pollinations görseli üretilemedi');
   }
 
   async openaiImage(prompt) {
@@ -257,8 +278,8 @@ export class ImageAgent {
       while (attempt < MAX_ATTEMPTS) {
         const prompt = this.buildPrompt(job, { extraObjects, avoid });
         if (this.provider === 'pollinations') {
-          // Ücretsiz anonim katman ~15 sn'de 1 istek: varsayılan bekleme 16 sn
-          const delay = Number(process.env.IMAGE_REQUEST_DELAY_MS || 16000);
+          // Ücretsiz katman: istekler arasında kısa bekleme (varsayılan 1.5 sn)
+          const delay = Math.max(this.requestDelayMs, this.penaltyMs);
           if (index > 0 && delay > 0) await new Promise((r) => setTimeout(r, delay));
         }
         try {
