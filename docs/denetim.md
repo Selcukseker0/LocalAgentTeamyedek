@@ -257,3 +257,33 @@ Doğrulama: `test/customProvider.test.js` (5 test) — hazır URL, `response_for
 Not: Groq/OpenRouter/Cerebras'ın gerçek uçlarına sandbox'tan erişilemiyor;
 istek biçimi (OpenAI `/chat/completions`) sahte fetch ile doğrulandı, canlı
 doğrulama kullanıcı makinesinde `npm run doctor` ile yapılacak.
+
+## 12. ".env'i tamamen düzelt" turu
+
+Kullanıcı `.env` dosyasının tamamını yapıştırdı ve "bunu tamamen düzelt" dedi.
+Dosyada üretimi sessizce bozan satırlar vardı:
+
+| Satır | Sorun | Sonuç |
+|---|---|---|
+| `GROUNDING_MIN_NUMBER=10cls` | `Number('10cls')` = `NaN` | uydurma-sayı kontrolü sessizce kapandı → "kaynakta olmayan sayı" videoya girdi |
+| `GROUNDING_MIN_NUMBER=1` (ikinci kez) | tekrarlanan anahtar | son satır kazandı, eşik 1'e düştü (kontrol fiilen kapalı) |
+| `LLM_PROVIDER=gemini` + sonra `=groq` | tekrarlanan anahtar | hangisinin geçerli olduğu belirsiz |
+| `LLM_API_KEY=gsk_…X.  ` | sonda nokta + boşluk | 401; anahtar geçersiz |
+| `LLM_MODEL=…   ` | sonda boşluk | model adı bulunamaz |
+| `VISION_MODEL=gemini-3.8-flash` | uydurma model adı | 404 / vision sessizce atlanır |
+| `SCRIPT_SINGLE_PASS`, `IMAGE_429_RETRIES`, `LLM_API_TIMEOUT_MS`, `RESEARCH_FACT_OVERLAP` | hiç yok | tek geçiş kapalı (yavaş), 429'da tekrar yok |
+
+| İş | Durum | Nerede |
+|---|---|---|
+| `.env` doğrulayıcı | **eklendi** | `src/utils/envCheck.js` — `validateEnvFile()` / `summarizeIssues()`; sayı biçimi + aralık, tekrarlanan anahtar, sonda boşluk/nokta, bilinmeyen sağlayıcı |
+| doctor | **eklendi** | `.env içeriği` satırı: temizse ✅, hata varsa ❌ + düzeltme önerisi |
+| doctor | **eklendi** | `Görsel doğrulama` satırı: vision anahtarı yok ya da vision=gemini + birincil≠gemini ise uyarı (kota ayrı) |
+| üretim öncesi denetim | **eklendi** | `autoVideo` `.env` hatalıysa **hiç başlamaz** (hızlı başarısız), uyarıları yazdırır |
+| temiz dosya | **eklendi** | `.env.duzeltilmis`: tek geçiş, Groq birincil, `VISION_CHECK=0`, `GROUNDING_MIN_NUMBER=10`, sonda boşluk yok |
+| testler | **eklendi** | `test/envCheck.test.js` (7 test) — `10cls`, tekrarlanan anahtar + satır numarası, sonda nokta/boşluk, bilinmeyen sağlayıcı, aralık dışı sayı, yorum/boş satır |
+
+`npm test` → **46/46**. Doğrulama: bozuk `.env` ile `auto-video` çalıştırıldı →
+4 sorun yazdırıp üretime girmeden çıktı; `.env.duzeltilmis` → `0 sorun`.
+
+Güvenlik: iki anahtar sohbete düz metin yapıştırıldı → **iptal edilip
+yenilenmeli** (console.groq.com/keys, aistudio.google.com/apikey).

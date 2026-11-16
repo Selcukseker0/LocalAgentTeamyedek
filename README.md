@@ -474,6 +474,46 @@ LLM_MODEL=llama-3.3-70b-versatile
 `LLM_NO_FALLBACK=1` iken kota/bağlantı hatasında akış hemen durur — yanlış
 modelle 10 dakika beklemek yerine sorunu görürsün.
 
+## Bozuk `.env` — sessizce kapanan kontroller
+
+`.env` elle düzenlenirken üç hata sık oluyor ve **hiçbiri hata vermiyordu**:
+
+| Yazım | Sonuç |
+|---|---|
+| `GROUNDING_MIN_NUMBER=10cls` | `Number('10cls')` = `NaN` → uydurma-sayı kontrolü tamamen kapanır |
+| Aynı anahtar iki kez (`LLM_PROVIDER=gemini` … sonra `=groq`) | sessizce son satır geçerli olur, hangisinin çalıştığı belirsiz kalır |
+| Değerin sonunda boşluk/nokta (`gsk_...X. `) | anahtar geçersiz, 401 |
+
+Artık ikisi de yakalıyor:
+
+```
+✅ doctor → .env içeriği: sayısal değerler ve anahtarlar tutarlı
+❌ doctor → .env içeriği: GROUNDING_MIN_NUMBER="10cls" sayı değil …
+```
+
+`auto-video` da başlamadan önce dosyayı denetler; **hata varsa hiç üretime
+girmez** (araştırma/senaryo/render beklemez):
+
+```
+⚠️  .env: 4 sorun (3 hata, 1 uyarı)
+   ❌ GROUNDING_MIN_NUMBER="10cls" sayı değil … (2. satır)
+   ⚠️  3. satırda değerin sonunda boşluk/nokta var ("_abcX.")
+   ❌ LLM_PROVIDER birden fazla tanımlı (1. ve 5. satır)
+❌ .env içinde düzeltilmesi gereken hata var — üretim başlatılmadı.
+```
+
+Temiz başlangıç dosyası depoda: **`.env.duzeltilmis`** (anahtarlar boş).
+
+```powershell
+Copy-Item .env.duzeltilmis .env -Force
+notepad .env            # LLM_API_KEY satırına yeni anahtarını yaz
+npm.cmd run doctor
+```
+
+Kurallar: her anahtar **bir kez**, sayısal alanlara harf yazma, değerin sonunda
+boşluk/nokta bırakma, `GEMINI_MODEL`/`VISION_MODEL` gibi model adlarını
+**uydurma** (boş bırak, kod çözer).
+
 ## Gemini / model bağlantısı ve yavaşlık
 
 `npm run doctor` artık birincil modeli **gerçekten çağırır**; video başlatmadan

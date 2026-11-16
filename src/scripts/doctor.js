@@ -9,6 +9,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { validateEnvFile } from '../utils/envCheck.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -81,6 +82,22 @@ async function main() {
   record(hasEnv, '.env dosyası',
     hasEnv ? 'var' : 'yok (bot/YouTube anahtarları boş kalır, üretim yine çalışır)',
     'npm.cmd run env:init');
+
+  // 4b) .env içeriği: bozuk sayı, tekrarlanan anahtar, tanınmayan sağlayıcı
+  if (hasEnv) {
+    const { issues } = await validateEnvFile(path.join(root, '.env'));
+    const errors = issues.filter((item) => item.level === 'error');
+    if (!issues.length) {
+      record(true, '.env içeriği', 'sayısal değerler ve anahtarlar tutarlı');
+    } else {
+      record(
+        errors.length === 0,
+        '.env içeriği',
+        issues.map((item) => item.message).join(' | '),
+        'Bozuk satırları düzeltin: `notepad .env`. Örnek temiz dosya: .env.example'
+      );
+    }
+  }
 
   // 5) Python + paketler
   const pythonBin = process.env.PYTHON_BIN || 'python';
@@ -219,6 +236,26 @@ async function main() {
   } catch {
     record(false, 'Ollama', `ulaşılamadı (${ollamaUrl})`,
       'Ollama uygulamasını aç veya "ollama serve" çalıştır');
+  }
+
+  // Vision: gemini vision, çalışmayan bir anahtara bağlıysa sessizce devre dışı kalır
+  if ((process.env.VISION_CHECK ?? '1') !== '0') {
+    const visionProvider = (process.env.VISION_PROVIDER || 'gemini').toLowerCase();
+    const llmProvider = (process.env.LLM_PROVIDER || 'ollama').toLowerCase();
+    const visionKey = process.env.VISION_API_KEY
+      || (visionProvider === 'gemini'
+        ? (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)
+        : (process.env.LLM_API_KEY || process.env.OPENAI_API_KEY));
+    if (!visionKey && visionProvider !== 'custom') {
+      record(false, 'Görsel doğrulama', `${visionProvider} için anahtar yok`,
+        'VISION_CHECK=0 yapın veya VISION_API_KEY yazın');
+    } else if (visionProvider === 'gemini' && llmProvider !== 'gemini') {
+      record(false, 'Görsel doğrulama',
+        'gemini vision seçili ama birincil model ' + llmProvider + ' (Gemini kotası ayrı)',
+        'Gemini kotanız doluysa VISION_CHECK=0 yapın veya VISION_PROVIDER=groq + VISION_MODEL=<görsel modeli>');
+    } else {
+      record(true, 'Görsel doğrulama', `${visionProvider} açık`);
+    }
   }
 
   // Rapor
