@@ -235,3 +235,25 @@ tükenince Ollama; `LLM_NO_FALLBACK=1` → hata; devre kesici → Gemini hiç
 denenmez; yarım JSON onarımı; model adı önerisi/model seçimi.
 `npm test` → **34/34**. Tek geçiş simülasyonu: 13 cümlelik girdi → **1 LLM
 çağrısı**, 11 sahne, 86 kelime, ~30 sn senaryo.
+
+## 11. Gemini kotası dolduğunda (429) yeni yol
+
+Kullanıcının anahtarı ücretsiz kota sınırına dayandı: `429 exceeded your current quota`.
+Bağlantı ve model adı artık sorunsuz; engel yalnızca kota.
+
+| İş | Durum | Nerede |
+|---|---|---|
+| Kota hatasını ayırt etme | **eklendi** | `doctor`: 429'da "Kota doldu (429) — bağlantı çalışıyor" + yeni anahtar/alternatif önerisi (internet/VPN önerisi kaldırıldı) |
+| OpenAI uyumlu ücretsiz sağlayıcılar | **eklendi** | `provider.js`: `groq`, `openrouter`, `cerebras`, `together`, `lmstudio`, `llamacpp`, `custom` (`LLM_API_URL`). `LLM_API_KEY` + `LLM_MODEL` yeterli |
+| `response_format` desteklemeyen sağlayıcı | **eklendi** | 400 alınca JSON modu olmadan tekrar dener |
+| 429/5xx/ağ hatası | **eklendi** | `Retry-After`/üstel bekleme ile tekrar, `LLM_NO_FALLBACK` ve devre kesici aynı şekilde geçerli |
+| Yavaş Ollama'da sessizlik | **eklendi** | `ollamaClient` artık `stream: true`; 5 sn'de bir `Ollama yazıyor… N karakter, X sn` satırı, sonunda parça/süre özeti |
+| doctor'da özel sağlayıcı | **eklendi** | gerçek istek + model + URL + süre |
+
+Doğrulama: `test/customProvider.test.js` (5 test) — hazır URL, `response_format`
+400 → tekrar, 429 → tekrar, `LLM_MODEL` boş hatası, NDJSON akış birleştirme.
+`npm test` → **39/39**.
+
+Not: Groq/OpenRouter/Cerebras'ın gerçek uçlarına sandbox'tan erişilemiyor;
+istek biçimi (OpenAI `/chat/completions`) sahte fetch ile doğrulandı, canlı
+doğrulama kullanıcı makinesinde `npm run doctor` ile yapılacak.

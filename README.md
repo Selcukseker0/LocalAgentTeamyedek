@@ -449,6 +449,31 @@ Hız için:
 - Karaoke altyazı ek maliyet getirmez (kelime zamanları zaten TTS'ten geliyor).
 - `--topic "..."` ile konu seçimini, `--text "..."` ile senaryo üretimini atlayabilirsiniz.
 
+## Kota bitti (429) — ücretsiz alternatifler
+
+`Gemini API hatası (429) ... exceeded your current quota` → bağlantı çalışıyor,
+**anahtarın ücretsiz kotası** bitti. Sırayla:
+
+1. **Yeni anahtar** (en hızlı): [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   → yeni proje oluştur → anahtarı `.env`e yaz. Yeni Anahtar = yeni kota.
+2. **Başka ücretsiz sağlayıcı** (OpenAI uyumlu, kod desteği var):
+
+```env
+LLM_PROVIDER=groq
+LLM_API_KEY=gsk_...
+LLM_MODEL=llama-3.3-70b-versatile
+```
+
+   Hazır URL'ler: `groq`, `openrouter`, `cerebras`, `together` (bulut, ücretsiz
+   katman) · `lmstudio`, `llamacpp` (yerel, anahtar gerekmez) ·
+   `custom` + `LLM_API_URL`.
+3. **Bekle** — günlük kota sıfırlanınca düzelir.
+4. **Ollama'ya dön** — `LLM_PROVIDER=ollama`. CPU'da yavaş; artık akış açık
+   olduğu için beklerken yazıldığını görürsün (`Ollama yazıyor… 320 karakter, 48 sn`).
+
+`LLM_NO_FALLBACK=1` iken kota/bağlantı hatasında akış hemen durur — yanlış
+modelle 10 dakika beklemek yerine sorunu görürsün.
+
 ## Gemini / model bağlantısı ve yavaşlık
 
 `npm run doctor` artık birincil modeli **gerçekten çağırır**; video başlatmadan

@@ -104,7 +104,26 @@ async function main() {
 
   // 7) Birincil LLM sağlayıcısı (video başlamadan önce gerçek istek)
   const provider = (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
-  if (provider === 'gemini' || provider === 'anthropic') {
+  const { CUSTOM_PRESETS } = await import('../llm/provider.js');
+  const isCustom = provider === 'custom' || Boolean(CUSTOM_PRESETS[provider]);
+
+  if (isCustom) {
+    const started = Date.now();
+    try {
+      const { askLLM } = await import('../llm/provider.js');
+      await askLLM({ prompt: 'Sadece "ok" yaz.', temperature: 0 });
+      const endpoint = process.env.LLM_API_URL || CUSTOM_PRESETS[provider];
+      record(true, `LLM (${provider})`, `${process.env.LLM_MODEL || '?'} · ${endpoint} · ${((Date.now() - started) / 1000).toFixed(1)} sn`);
+    } catch (err) {
+      record(
+        false,
+        `LLM (${provider})`,
+        err.message,
+        'LLM_API_KEY / LLM_MODEL doğru mu? Groq: api.groq.com · OpenRouter: openrouter.ai · ' +
+        'LM Studio yerelde: LLM_PROVIDER=lmstudio (anahtar gerekmez)'
+      );
+    }
+  } else if (provider === 'gemini' || provider === 'anthropic') {
     const started = Date.now();
     try {
       if (provider === 'gemini') {
@@ -128,14 +147,19 @@ async function main() {
         record(true, `Anthropic (${provider})`, `${((Date.now() - started) / 1000).toFixed(1)} sn`);
       }
     } catch (err) {
+      const quota = /429|quota|exceeded/i.test(err.message);
       record(
         false,
         `${provider === 'gemini' ? 'Gemini' : 'Anthropic'} (birincil model)`,
-        err.message,
-        provider === 'gemini'
-          ? 'İnternet/VPN/güvenlik duvarı; GEMINI_MODEL boş bırakılırsa model otomatik seçilir. ' +
+        quota
+          ? 'Kota doldu (429) — bağlantı çalışıyor, anahtarın ücretsiz kotası bitmiş.'
+          : err.message,
+        quota
+          ? 'Yeni anahtar oluştur (aistudio.google.com/apikey — yeni proje = yeni kota) ya da bekle. ' +
+            'Alternatif ücretsiz yol: LLM_PROVIDER=groq + LLM_API_KEY + LLM_MODEL, ' +
+            'veya LLM_PROVIDER=ollama (yavaş).'
+          : 'İnternet/VPN/güvenlik duvarı; GEMINI_MODEL boş bırakılırsa model otomatik seçilir. ' +
             'Bağlantı yoksa LLM_PROVIDER=ollama yap (yavaş olur) veya LLM_NO_FALLBACK=1 ile hızlı dur.'
-          : 'ANTHROPIC_API_KEY ve internet bağlantısını kontrol et.'
       );
     }
   } else {
