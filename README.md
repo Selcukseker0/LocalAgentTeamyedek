@@ -473,6 +473,16 @@ Hız için:
 - **Devre kesici** → üst üste `LLM_BREAKER_FAILURES` (2) hatadan sonra birincil
   sağlayıcı o çalıştırmada bırakılır; kalan adımlar boşuna beklemez.
 
+### Sadece senaryoyu görmek (ses/render beklemeden)
+
+```powershell
+npm.cmd run auto-video -- --script-only --topic "Bal neden bozulmaz?"
+```
+
+Senaryoyu üretir, cümleleri ve her cümlenin çizilebilir nesnelerini ekrana
+basar, `script.json` yazar ve **durur** (ses, görsel, render yok). Metin
+kalitesini 20 dakika bekleyip video üretmeden denetlemek için.
+
 ### Yalnızca Ollama ile çalışırken hız
 
 CPU'da `qwen2.5:7b` her çağrıda 3-9 dakika harcıyordu ve senaryo 5-6 çağrı
