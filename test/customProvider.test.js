@@ -113,3 +113,20 @@ test('Ollama akışı (NDJSON) birleştirilir ve JSON ayrıştırılır', async 
   assert.equal(sawStream, true, 'ilerleme görünsün diye akış istenmeli');
   assert.equal(result.scenes[0].narration, 'Bal bozulmaz.');
 });
+
+test('401 anahtar reddinde parmak izi yazar (değeri sızdırmaz)', async () => {
+  setEnv({ LLM_API_KEY: 'gsk_abcdefghij0mb6X', LLM_NO_FALLBACK: '1' });
+  script = [jsonResponse({ error: { message: 'Invalid API Key' } }, 401)];
+
+  const { askLLM } = await import('../src/llm/provider.js?case=auth');
+  await assert.rejects(
+    () => askLLM({ prompt: 'test' }),
+    (err) => {
+      assert.match(err.message, /anahtar reddedildi/);
+      assert.match(err.message, /karakter/);
+      assert.ok(!err.message.includes('gsk_abcdefghij0mb6X'), 'anahtarın tamamı yazılmamalı');
+      return true;
+    }
+  );
+  assert.equal(calls.length, 1, '401 tekrar denenmez');
+});

@@ -1,11 +1,17 @@
 import path from 'node:path';
+import { loadEnvFile } from './utils/envLoad.js';
+
+// .env'i kendimiz yükleriz: dotenv değerleri olduğu gibi alır, biz ise
+// sondaki nokta/boşluğu temizleriz (Groq 401'inin sebebi buydu). Zaten
+// yüklendiyse tekrar okumaz.
+loadEnvFile({ quiet: true });
 
 // dotenv yalnızca .env kolaylığı sağlar. Bağımlılıklar kurulu değilse
 // (ör. sadece beyaz tahta demosunu denemek isteyen kullanıcı) süreç
 // çökmemeli; ortam değişkenleri doğrudan kullanılır.
 try {
   const dotenv = await import('dotenv');
-  (dotenv.default ?? dotenv).config();
+  (dotenv.default ?? dotenv).config({ override: false });
 } catch {
   console.warn(
     '[config] dotenv bulunamadı, .env yüklenmedi. Önce `npm install`, ' +

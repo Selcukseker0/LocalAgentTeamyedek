@@ -9,6 +9,7 @@
  * Ses dosyası verilmezse video sessiz üretilir (altyazılar yine gömülür).
  */
 
+import '../utils/envBootstrap.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';

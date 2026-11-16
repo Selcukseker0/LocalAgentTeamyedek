@@ -13,6 +13,7 @@
  */
 
 import { config } from '../config.js';
+import { fingerprintSecret } from '../utils/envCheck.js';
 import { askOllama } from './ollamaClient.js';
 import {
   geminiGenerate,
@@ -159,6 +160,15 @@ async function askCustom({ system, prompt, json, temperature, numPredict }) {
 
     if (!res.ok) {
       const text = (await res.text()).slice(0, 300);
+      // 401 neredeyse her zaman anahtarın kendisi: yanlış/eski anahtar ya da
+      // kopyalama kalıntısı. Değeri sızdırmadan parmak izini yaz.
+      if (res.status === 401 || res.status === 403) {
+        lastError = new Error(
+          `API hatası (${res.status}): anahtar reddedildi — LLM_API_KEY: ` +
+          `${key ? fingerprintSecret(key) : 'boş'}. ${text}`
+        );
+        throw lastError;
+      }
       lastError = new Error(`API hatası (${res.status}): ${text}`);
       if (res.status === 429 || res.status >= 500) {
         const retryAfter = Number(res.headers?.get?.('retry-after') || 0) * 1000;

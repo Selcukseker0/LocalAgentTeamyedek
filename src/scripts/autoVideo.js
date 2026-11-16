@@ -13,11 +13,13 @@
  * Üretim mantığı `src/pipeline/shortPipeline.js` içinde; bot da aynı hattı kullanır.
  */
 
+import '../utils/envBootstrap.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { countWords } from '../agents/ScriptAgent.js';
 import { generateShort, estimateSeconds } from '../pipeline/shortPipeline.js';
-import { summarizeIssues, validateEnvFile } from '../utils/envCheck.js';
+import { summarizeIssues } from '../utils/envCheck.js';
+import { getEnvReport } from '../utils/envLoad.js';
 
 function hasFlag(name) {
   return process.argv.includes(`--${name}`);
@@ -44,9 +46,11 @@ async function main() {
 
   // .env bozuksa üretime hiç başlamadan söyle: eskiden "10cls" gibi bir değer
   // yüzünden kontroller sessizce kapanıyor, hata ancak video bittikten sonra
-  // fark ediliyordu.
-  if (envExists) {
-    const { issues } = await validateEnvFile(path.join(process.cwd(), '.env'));
+  // fark ediliyordu. Değerler zaten envBootstrap'ta temizlenerek yüklendi;
+  // burada yalnızca kalan (elle düzeltilmesi gereken) sorunları raporlarız.
+  const envReport = getEnvReport();
+  if (envReport?.loaded) {
+    const issues = envReport.issues;
     const errors = issues.filter((item) => item.level === 'error');
     if (issues.length) {
       console.log(`\n⚠️  .env: ${summarizeIssues(issues)}`);
